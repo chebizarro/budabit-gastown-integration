@@ -1,24 +1,77 @@
 <script lang="ts">
   import {
-    WidgetBridge,
     createWidgetBridge,
-    createTextNote,
-    type UnsignedEvent,
-    type WidgetContext,
+    createGTStores,
+    type WidgetBridge,
+    type GTStoreManager,
+    type ParsedGTEvent,
+    type LogStatusContent,
+    type LifecycleContent,
+    type ConvoyStateContent,
+    type BeadsIssueStateContent,
+    type ProtocolEventContent,
+    type WorkItemContent,
+    type QueueDefContent,
   } from '@flotilla/ext-shared';
 
-  // Bridge + host-provided context (optional/demo)
-  let bridge = $state<WidgetBridge | null>(null);
-  let context = $state<WidgetContext | null>(null);
+  import ActivityView from './views/ActivityView.svelte';
+  import AgentsView from './views/AgentsView.svelte';
+  import ConvoysView from './views/ConvoysView.svelte';
+  import IssuesView from './views/IssuesView.svelte';
+  import WorkQueueView from './views/WorkQueueView.svelte';
+  import ProtocolView from './views/ProtocolView.svelte';
 
-  // UI state
-  let hasContext = $state(false);
-  let note = $state('');
-  let status = $state('Initializing Smart Widget...');
-  let lastPublishResult = $state<string | null>(null);
-  let lastError = $state<string | null>(null);
+  type Tab = 'activity' | 'agents' | 'convoys' | 'issues' | 'workqueue' | 'protocol';
 
-  // Initialize bridge and set up handlers
+  const TABS: { id: Tab; label: string; icon: string }[] = [
+    { id: 'activity', label: 'Activity', icon: '📋' },
+    { id: 'agents', label: 'Agents', icon: '🤖' },
+    { id: 'convoys', label: 'Convoys', icon: '🚢' },
+    { id: 'issues', label: 'Issues', icon: '📝' },
+    { id: 'workqueue', label: 'Work Queue', icon: '📥' },
+    { id: 'protocol', label: 'Protocol', icon: '📡' },
+  ];
+
+  // State
+  let stores = $state<GTStoreManager | null>(null);
+  let activeTab = $state<Tab>('agents');
+  let status = $state('Initializing...');
+  let connected = $state(false);
+
+  // Reactive store subscriptions
+  let logs = $state<ParsedGTEvent<LogStatusContent>[]>([]);
+  let agents = $state<ParsedGTEvent<LifecycleContent>[]>([]);
+  let convoys = $state<ParsedGTEvent<ConvoyStateContent>[]>([]);
+  let issues = $state<ParsedGTEvent<BeadsIssueStateContent>[]>([]);
+  let protocol = $state<ParsedGTEvent<ProtocolEventContent>[]>([]);
+  let workItems = $state<ParsedGTEvent<WorkItemContent>[]>([]);
+  let queues = $state<ParsedGTEvent<QueueDefContent>[]>([]);
+  let loading = $state(false);
+  let storeError = $state<string | null>(null);
+
+  // Default relays (overridden by host context)
+  const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol'];
+
+  function initStores(b: WidgetBridge, relays: string[]) {
+    const s = createGTStores(b, relays);
+    stores = s;
+
+    // Subscribe to all stores
+    s.logs.subscribe(v => { logs = v; });
+    s.agents.subscribe(v => { agents = v; });
+    s.convoys.subscribe(v => { convoys = v; });
+    s.issues.subscribe(v => { issues = v; });
+    s.protocol.subscribe(v => { protocol = v; });
+    s.workItems.subscribe(v => { workItems = v; });
+    s.queues.subscribe(v => { queues = v; });
+    s.loading.subscribe(v => { loading = v; });
+    s.error.subscribe(v => { storeError = v; });
+
+    // Initial fetch
+    void s.refresh();
+  }
+
+  // Initialize bridge
   $effect(() => {
     const b = createWidgetBridge({
       targetWindow: window.parent,
@@ -26,174 +79,97 @@
       timeoutMs: 15000,
     });
 
-    bridge = b;
-    status = 'Ready. Waiting for optional host context...';
-    lastPublishResult = null;
-    lastError = null;
+    status = 'Bridge ready. Waiting for host context...';
 
     const offContext = b.onEvent('context:update', (ctx) => {
-      context = ctx;
-      hasContext = true;
+      connected = true;
 
-      const ctxId = typeof ctx?.contextId === 'string' ? ctx.contextId : undefined;
-      status = ctxId ? `Connected (contextId: ${ctxId})` : 'Connected (context received)';
+      const relays = Array.isArray(ctx?.relays) && ctx.relays.length > 0
+        ? ctx.relays
+        : DEFAULT_RELAYS;
+
+      status = 'Connected to Gas Town';
+      initStores(b, relays);
     });
 
+    // If no context arrives within 3s, initialize with defaults
+    const fallbackTimer = setTimeout(() => {
+      if (!connected) {
+        status = 'Using default relays (no host context)';
+        initStores(b, DEFAULT_RELAYS);
+        connected = true;
+      }
+    }, 3000);
+
     return () => {
+      clearTimeout(fallbackTimer);
       offContext();
       b.destroy();
-      bridge = null;
     };
   });
 
-  function buildNoteEvent(content: string): UnsignedEvent {
-    const tags: string[][] = [];
-
-    const ctxId = typeof context?.contextId === 'string' ? context.contextId : undefined;
-    if (ctxId) {
-      tags.push(['h', ctxId]);
-    }
-
-    return createTextNote(content, tags);
-  }
-
-  async function publishNote(): Promise<void> {
-    if (!bridge) return;
-
-    const content = note.trim();
-    if (!content) return;
-
-    lastPublishResult = null;
-    lastError = null;
-    status = 'Publishing note via host (nostr:publish)...';
-
-    const event = buildNoteEvent(content);
-
-    try {
-      const res = await bridge.request('nostr:publish', event);
-
-      if (res && typeof res === 'object' && 'error' in res && typeof res.error === 'string') {
-        lastError = res.error;
-        status = `Publish failed: ${res.error}`;
-        return;
-      }
-
-      lastPublishResult = 'ok';
-      status = 'Published successfully';
-      note = '';
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      lastError = msg;
-      status = `Publish failed: ${msg}`;
-    }
-  }
-
-  async function showToast(): Promise<void> {
-    if (!bridge) return;
-
-    lastError = null;
-
-    const message = hasContext
-      ? 'Hello from Smart Widget (context connected)'
-      : 'Hello from Smart Widget';
-
-    try {
-      const res = await bridge.request('ui:toast', { message, type: 'info' });
-
-      if (res && typeof res === 'object' && 'error' in res && typeof res.error === 'string') {
-        lastError = res.error;
-        status = `Toast failed: ${res.error}`;
-        return;
-      }
-
-      status = 'Toast requested';
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      lastError = msg;
-      status = `Toast failed: ${msg}`;
-    }
-  }
+  // Auto-refresh every 30s
+  $effect(() => {
+    if (!stores) return;
+    const interval = setInterval(() => {
+      stores?.refresh();
+    }, 30000);
+    return () => clearInterval(interval);
+  });
 </script>
 
-<div class="container">
-  <header>
-    <h1>Flotilla Smart Widget Template (Tool)</h1>
-    <p class="status" class:ready={hasContext}>{status}</p>
-  </header>
-
-  {#if context}
-    <section class="context">
-      <h2>Host Context (optional)</h2>
-      <dl>
-        {#if context.contextId}
-          <dt>Context ID:</dt>
-          <dd>{String(context.contextId)}</dd>
-        {/if}
-
-        {#if context.userPubkey}
-          <dt>User Pubkey:</dt>
-          <dd class="pubkey">{String(context.userPubkey)}</dd>
-        {/if}
-
-        {#if Array.isArray(context.relays) && context.relays.length > 0}
-          <dt>Relays:</dt>
-          <dd>{context.relays.join(', ')}</dd>
-        {/if}
-      </dl>
-
-      <details class="context-raw">
-        <summary>Raw context payload</summary>
-        <pre>{JSON.stringify(context, null, 2)}</pre>
-      </details>
-    </section>
-  {:else}
-    <section class="waiting">
-      <h2>Waiting for host context</h2>
-      <p>
-        This Smart Widget works without context, but can optionally receive it via
-        <code>context:update</code>.
-      </p>
-      <p class="hint">If you are testing locally, your host must post a <code>type: "event"</code> message.</p>
-    </section>
-  {/if}
-
-  <section class="actions">
-    <h2>Actions</h2>
-
-    <div class="action-group">
-      <h3>Publish a note (nostr:publish)</h3>
-      <div class="input-group">
-        <input
-          type="text"
-          bind:value={note}
-          placeholder="Type a note to publish..."
-          onkeydown={(e) => e.key === 'Enter' && publishNote()}
-        />
-        <button onclick={publishNote} disabled={!bridge || !note.trim()}>
-          Publish
-        </button>
-      </div>
-
-      {#if lastPublishResult}
-        <p class="result">Last publish result: {lastPublishResult}</p>
+<div class="dashboard">
+  <header class="dash-header">
+    <div class="brand">
+      <span class="brand-icon">⛽</span>
+      <h1>Gas Town</h1>
+    </div>
+    <div class="header-right">
+      <span class="status-indicator" class:connected>
+        <span class="dot"></span>
+        {status}
+      </span>
+      {#if loading}
+        <span class="loading-spinner"></span>
       {/if}
     </div>
+  </header>
 
-    <div class="action-group">
-      <h3>Request a toast (ui:toast)</h3>
-      <div class="button-group">
-        <button onclick={showToast} disabled={!bridge}>
-          Show Toast
-        </button>
-      </div>
+  {#if storeError}
+    <div class="error-banner">
+      <strong>Error:</strong> {storeError}
+      <button class="btn-dismiss" onclick={() => { storeError = null; }}>✕</button>
     </div>
+  {/if}
 
-    {#if lastError}
-      <div class="error">
-        <strong>Error:</strong> {lastError}
-      </div>
+  <nav class="tab-bar">
+    {#each TABS as tab (tab.id)}
+      <button
+        class="tab"
+        class:active={activeTab === tab.id}
+        onclick={() => { activeTab = tab.id; }}
+      >
+        <span class="tab-icon">{tab.icon}</span>
+        <span class="tab-label">{tab.label}</span>
+      </button>
+    {/each}
+  </nav>
+
+  <main class="tab-content">
+    {#if activeTab === 'activity'}
+      <ActivityView events={logs} onRefresh={() => stores?.refreshLogs()} />
+    {:else if activeTab === 'agents'}
+      <AgentsView {agents} onRefresh={() => stores?.refreshAgents()} />
+    {:else if activeTab === 'convoys'}
+      <ConvoysView {convoys} onRefresh={() => stores?.refreshConvoys()} />
+    {:else if activeTab === 'issues'}
+      <IssuesView {issues} onRefresh={() => stores?.refreshIssues()} />
+    {:else if activeTab === 'workqueue'}
+      <WorkQueueView {workItems} {queues} onRefresh={() => { stores?.refreshWorkItems(); stores?.refreshQueues(); }} />
+    {:else if activeTab === 'protocol'}
+      <ProtocolView events={protocol} onRefresh={() => stores?.refreshProtocol()} />
     {/if}
-  </section>
+  </main>
 </div>
 
 <style>
@@ -203,169 +179,141 @@
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
       sans-serif;
     background: #f5f5f5;
+    color: #333;
   }
 
-  .container {
-    max-width: 800px;
+  .dashboard {
+    max-width: 1100px;
     margin: 0 auto;
-    padding: 2rem;
+    padding: 0 1rem;
   }
 
-  header {
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-
-  h1 {
-    margin: 0 0 0.5rem 0;
-    color: #333;
-  }
-
-  .status {
-    padding: 0.5rem 1rem;
-    background: #fff3cd;
-    border: 1px solid #ffc107;
-    border-radius: 4px;
-    color: #856404;
-    font-size: 0.9rem;
-  }
-
-  .status.ready {
-    background: #d4edda;
-    border-color: #28a745;
-    color: #155724;
-  }
-
-  section {
-    background: white;
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  }
-
-  h2 {
-    margin: 0 0 1rem 0;
-    color: #333;
-    font-size: 1.25rem;
-  }
-
-  h3 {
-    margin: 0 0 0.75rem 0;
-    color: #666;
-    font-size: 1rem;
-  }
-
-  dl {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.5rem 1rem;
-    margin: 0;
-  }
-
-  dt {
-    font-weight: 600;
-    color: #666;
-  }
-
-  dd {
-    margin: 0;
-    color: #333;
-  }
-
-  .pubkey {
-    font-family: monospace;
-    font-size: 0.85rem;
-    word-break: break-all;
-  }
-
-  .context-raw {
-    margin-top: 1rem;
-  }
-
-  .context-raw pre {
-    margin: 0.75rem 0 0 0;
-    padding: 0.75rem;
-    background: #f8f9fa;
-    border-radius: 6px;
-    border: 1px solid #eee;
-    overflow: auto;
-    font-size: 0.85rem;
-  }
-
-  .action-group {
-    margin-bottom: 1.5rem;
-  }
-
-  .action-group:last-child {
+  .dash-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #dee2e6;
     margin-bottom: 0;
-  }
-
-  .input-group {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  input[type='text'] {
-    flex: 1;
-    padding: 0.5rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 1rem;
-  }
-
-  .button-group {
-    display: flex;
-    gap: 0.5rem;
     flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
-  button {
-    padding: 0.5rem 1rem;
-    background: #007bff;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: background 0.2s;
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
-  button:hover:not(:disabled) {
-    background: #0056b3;
+  .brand-icon { font-size: 1.5rem; }
+
+  .brand h1 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #222;
   }
 
-  button:disabled {
-    background: #ccc;
-    cursor: not-allowed;
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
   }
 
-  .result {
-    margin: 0.75rem 0 0 0;
-    color: #333;
-    font-size: 0.95rem;
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: #888;
   }
 
-  .error {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    border: 1px solid #dc3545;
+  .status-indicator .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ffc107;
+  }
+
+  .status-indicator.connected .dot {
+    background: #28a745;
+  }
+
+  .loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #dee2e6;
+    border-top-color: #007bff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .error-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
     background: #f8d7da;
-    border-radius: 6px;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
     color: #721c24;
-  }
-
-  .waiting {
-    text-align: center;
-  }
-
-  .waiting p {
+    font-size: 0.85rem;
     margin: 0.5rem 0;
-    color: #666;
   }
 
-  .hint {
-    font-size: 0.9rem;
-    color: #999;
+  .btn-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #721c24;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0;
+  }
+
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid #dee2e6;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.6rem 1rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #666;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .tab:hover { color: #333; }
+
+  .tab.active {
+    color: #007bff;
+    border-bottom-color: #007bff;
+    font-weight: 600;
+  }
+
+  .tab-icon { font-size: 1rem; }
+
+  .tab-content {
+    background: white;
+    border-radius: 0 0 8px 8px;
+    padding: 1.25rem;
+    min-height: 400px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   }
 </style>

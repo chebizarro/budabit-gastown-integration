@@ -200,11 +200,13 @@ export class WidgetBridge {
     const msg = parsed.data as WidgetWireMessage;
 
     if (msg.type === 'response') {
-      const pending = this.pending.get(msg.id);
+      const msgId = msg.id;
+      if (!msgId) return;
+      const pending = this.pending.get(msgId);
       if (!pending) return;
 
       if (pending.timeoutId) clearTimeout(pending.timeoutId);
-      this.pending.delete(msg.id);
+      this.pending.delete(msgId);
       pending.resolve(msg.payload);
       return;
     }

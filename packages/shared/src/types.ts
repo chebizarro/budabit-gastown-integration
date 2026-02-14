@@ -86,6 +86,16 @@ export type NostrPublishRequest = UnsignedEvent;
 export type NostrPublishResponse = { status: 'ok'; result?: unknown } | BridgeError;
 
 /**
+ * Nostr query request payload. Matches Flotilla's `nostr:query` bridge handler.
+ */
+export type NostrQueryRequest = {
+  relays: string[];
+  filter: Record<string, unknown>;
+};
+
+export type NostrQueryResponse = { status: 'ok'; events: unknown[] } | BridgeError;
+
+/**
  * Action map used by the canonical Smart Widget starter kit.
  *
  * - `nostr:publish` is a request/response action.
@@ -96,6 +106,11 @@ export interface WidgetActionMap {
   'nostr:publish': {
     req: NostrPublishRequest;
     res: NostrPublishResponse;
+  };
+
+  'nostr:query': {
+    req: NostrQueryRequest;
+    res: NostrQueryResponse;
   };
 
   'ui:toast': {
