@@ -1,237 +1,120 @@
-# Flotilla Smart Widget Template
+# Gas Town — Flotilla Extension
 
-An extension for integrating gastown with nostr
+Real-time Gas Town telemetry dashboard for Flotilla, delivered as a Nostr Smart Widget (kind `30033`).
 
-This template provides a production-ready foundation for creating **iframe-based Smart Widgets** that integrate with Flotilla using:
+## What It Does
 
-- A **Smart Widget event** published to Nostr (kind `30033`)
-- A **sandboxed iframe UI** (Svelte 5)
-- A **typed, action-based postMessage bridge** compatible with Flotilla
+Subscribes to Gas Town's Nostr event kinds and renders live dashboards inside Flotilla's iframe extension system. Events stream in real-time via relay subscriptions — **no polling**.
 
-## What is a Smart Widget?
+### Dashboard Views
 
-A Flotilla Smart Widget is represented on Nostr as a **kind `30033` addressable event**. The event describes:
+| Tab | Kind(s) | What You See |
+|-----|---------|--------------|
+| **Activity** | 30315 (`LOG_STATUS`) | Live activity feed (sling, done, merge, patrol, etc.) |
+| **Agents** | 30316 (`LIFECYCLE`) | Agent cards with role, status, heartbeat, stale detection |
+| **Chat** | 14 (NIP-17 DM) | Discord-like DM conversations with agents and humans |
+| **Channels** | 40/41/42 (NIP-28) | Public channel list, real-time channel messages |
+| **Convoys** | 30318 (`GT_CONVOY_STATE`) | Convoy progress bars, tracked issues, active workers |
+| **Issues** | 30319 (`GT_BEADS_ISSUE_STATE`) | Issue table with status/priority filters, deps, Blossom blobs |
+| **Groups** | 30321 (`GT_GROUP_DEF`) | Agent group definitions with member lists |
+| **Work Queue** | 30325 + 30322 | Claimable work items, queue definitions and stats |
+| **Protocol** | 30320 (`GT_PROTOCOL_EVENT`) | Machine protocol events (MERGE_READY, POLECAT_DONE, HELP) |
 
-- The widget identifier (`d` tag)
-- Widget type (`l` tag): `action` or `tool`
-- Display metadata (`image`, `icon`)
-- A launch button that points to your hosted iframe app (`button ... app ...`)
-- Declared permissions (`permission` tags)
+## Architecture
 
-Flotilla discovers and renders widgets based on these events and enforces privileged actions based on declared permissions.
-
-## Template Features
-
-- Svelte 5 iframe app example (Smart Widget "tool" pattern)
-- Framework-agnostic shared bridge package
-- TypeScript strict mode
-- Monorepo via pnpm workspaces
-- Unit tests (Vitest) + E2E tests (Playwright)
-- Smart Widget generator CLI (outputs kind `30033` event + optional `/.well-known/widget.json`)
+```
+Flotilla Host
+├── ExtensionBridge (postMessage)
+│   ├── nostr:subscribe → opens relay subscriptions
+│   ├── nostr:event ← pushes events as they arrive
+│   ├── nostr:eose ← signals end-of-stored-events
+│   └── nostr:publish → signs + publishes (DMs, channel messages)
+│
+└── Sandboxed iframe (this extension)
+    ├── WidgetBridge → GTStoreManager
+    │   ├── GT Protocol Stores (30315–30325, subscription-fed)
+    │   ├── NIP-17 DM Store (kind 14, gift-wrapped)
+    │   ├── NIP-28 Channel Store (kind 40/41/42)
+    │   └── No polling — all stores are push-updated
+    └── Svelte 5 Dashboard Views (9 tabs)
+```
 
 ## Quick Start
 
-### Bootstrap a new project (recommended)
-
 ```bash
-npx create-flotilla-widget my-widget
-```
-
-This scaffolds a fresh copy with your project name, description, and dependencies pre-installed.
-
-### Or clone and install manually
-
-### 1) Install
-
-```bash
+# Install
 pnpm install
-```
 
-### 2) Run the iframe app locally
-
-```bash
+# Dev server (iframe app at http://localhost:5173)
 pnpm dev
-```
 
-The widget iframe app will be available at `http://localhost:5173`.
-
-### 3) Build
-
-```bash
+# Build all packages
 pnpm build
+
+# Run tests
+pnpm test
+
+# E2E tests
+pnpm e2e
 ```
 
-### 4) Generate Smart Widget files (kind 30033)
+## Project Structure
 
-This writes:
-- `dist/widget/event.json` (unsigned kind `30033` event)
-- `dist/widget/widget.json` (optional `/.well-known/widget.json` file)
-- `dist/widget/PUBLISHING.md` (signing + publishing instructions)
+```
+packages/
+├── shared/           # Bridge, types, GT event stores, filters, parser
+│   └── src/gastown/  # GT-specific: kinds, types, filters, parser, reactive stores
+├── iframe-app/       # Svelte 5 dashboard (the actual widget UI)
+├── manifest/         # CLI to generate kind 30033 Smart Widget event
+├── worker/           # Headless bridge stub (future background processing)
+└── test-utils/       # Mock bridge and test helpers
+```
+
+## Generating the Smart Widget Event
 
 ```bash
 pnpm manifest:generate \
-  --type tool \
-  --title 'My Smart Widget' \
-  --app-url 'https://cdn.example.com/my-widget/index.html' \
-  --icon 'https://cdn.example.com/my-widget/icon.png' \
-  --image 'https://cdn.example.com/my-widget/preview.png' \
-  --button-title 'Open' \
-  --permissions 'nostr:publish,ui:toast'
+  --title "Gas Town Dashboard" \
+  --app-url "https://your-cdn.example.com/gastown/index.html" \
+  --icon "https://your-cdn.example.com/gastown/icon.png" \
+  --image "https://your-cdn.example.com/gastown/preview.png" \
+  --identifier "gastown-dashboard" \
+  --permissions "nostr:publish,nostr:query,nostr:subscribe,ui:toast"
 ```
 
-Notes:
-- `--identifier` is optional; if omitted it will be derived.
-- `--pubkey` is optional; if provided, publishing instructions can include an `naddr` hint.
+## Relay Configuration
 
-## Bridge Protocol (Action-Based)
+The extension receives relay URLs from the Flotilla host via `context:update`. These must match the relays your Gas Town instance publishes to:
 
-Flotilla uses an action-based postMessage protocol:
-
-- Widget -> Host requests:
-  - `{ type: 'request', id, action, payload }`
-- Host -> Widget responses:
-  - `{ type: 'response', id, action, payload }`
-- Host -> Widget events:
-  - `{ type: 'event', action, payload }`
-
-This template’s shared package provides a typed `WidgetBridge` with:
-
-- `request(action, payload) -> Promise<responsePayload>`
-- `onEvent(action, handler)` for host-initiated events (demo: `context:update`)
-- `onRequest(action, handler)` for bidirectional "tool" widgets (host can request work from the iframe)
-
-### Example: publish a note + show a toast
-
-```ts
-import { WidgetBridge, createEvent } from '@flotilla/ext-shared';
-
-const bridge = new WidgetBridge();
-
-async function publishNote(content: string) {
-  const event = createEvent(1, content, []);
-  const res = await bridge.request('nostr:publish', event);
-
-  if ('error' in res) {
-    await bridge.request('ui:toast', { message: res.error, type: 'error' });
-    return;
-  }
-
-  await bridge.request('ui:toast', { message: 'Published', type: 'success' });
-}
+```bash
+# In your Gas Town .env / Docker config:
+GT_NOSTR_WRITE_RELAYS=ws://relay:7000
+GT_NOSTR_READ_RELAYS=ws://relay:7000
 ```
-
-### Optional/demo: receive host context
-
-Hosts may send context information as an event:
-
-```ts
-bridge.onEvent('context:update', (ctx) => {
-  console.log('Context:', ctx.contextId, ctx.userPubkey, ctx.relays);
-});
-```
-
-This is optional: the widget should still run without context.
 
 ## Permissions
 
-Smart Widgets can declare permissions using `permission` tags (one per permission). This template defaults to:
-
-- `nostr:publish`
-- `ui:toast`
-
-Flotilla may treat some actions as privileged (for example `nostr:*` and `storage:*`) and enforce them based on the widget’s declared permissions.
-
-## Project Structure (Monorepo)
-
-```
-budabit-gastown-integration/
-├── packages/
-│   ├── shared/          # Framework-agnostic bridge + types + signaling helpers
-│   ├── iframe-app/      # Svelte 5 iframe app (Smart Widget tool demo)
-│   ├── worker/          # Optional stubbed worker bridge (action protocol)
-│   ├── manifest/        # CLI: generates kind 30033 + widget.json + instructions
-│   └── test-utils/      # Mocks for bridge/testing
-├── docs/                # Documentation (Smart Widget-focused)
-├── e2e/                 # Playwright E2E tests
-└── [config files]       # ESLint, Prettier, TypeScript, etc.
-```
-
-## Package Overview
-
-### `@flotilla/ext-shared`
-
-Shared, framework-agnostic code:
-
-- `WidgetBridge`: typed action-based postMessage bridge compatible with Flotilla
-- Smart Widget message/types: `WidgetWireMessage`, `WidgetActionMap`, `WidgetContext`
-- Nostr helpers: `createEvent`, `validateEvent`, and related signaling utilities
-
-### `@flotilla/ext-iframe`
-
-Svelte 5 iframe app demonstrating a Smart Widget "tool":
-
-- Calls host actions via `bridge.request('nostr:publish', ...)`
-- Calls UI actions via `bridge.request('ui:toast', ...)`
-- Displays optional host context received via `context:update`
-
-### `@flotilla/ext-manifest`
-
-Smart Widget generator CLI:
-
-- Generates unsigned kind `30033` event JSON
-- Generates `widget.json` for optional `/.well-known/widget.json` hosting
-- Generates `PUBLISHING.md` with signing + publishing steps (including naddr hint when possible)
-
-### `@flotilla/test-utils`
-
-Testing helpers and bridge mocks compatible with the action protocol.
-
-### `@flotilla/ext-worker`
-
-Optional worker stub aligned with the same action-based protocol.
-
-## Common Commands
-
-```bash
-pnpm dev
-pnpm build
-pnpm test
-pnpm test:coverage
-pnpm e2e
-pnpm verify
-pnpm manifest:generate
-```
-
-## Publishing (High Level)
-
-1) Build the iframe app:
-```bash
-pnpm build
-```
-
-2) Host the iframe HTML somewhere reachable by Flotilla (typically on HTTPS):
-- `packages/iframe-app/dist/index.html`
-
-3) Generate Smart Widget files:
-```bash
-pnpm manifest:generate \
-  --type tool \
-  --title 'My Smart Widget' \
-  --app-url 'https://cdn.example.com/my-widget/index.html' \
-  --icon 'https://cdn.example.com/my-widget/icon.png' \
-  --image 'https://cdn.example.com/my-widget/preview.png'
-```
-
-4) Sign and publish the generated kind `30033` event using `nostr-tools` (see `dist/widget/PUBLISHING.md`).
+| Permission | Purpose |
+|-----------|---------|
+| `nostr:subscribe` | Open persistent relay subscriptions |
+| `nostr:unsubscribe` | Close subscriptions on teardown |
+| `nostr:query` | One-shot relay queries (fallback) |
+| `nostr:publish` | Publish events (future: work item claims) |
+| `ui:toast` | Show toast notifications |
 
 ## Documentation
 
-Smart Widget docs live in `docs/` and cover:
-- Architecture
-- Host bridge expectations
-- Security guidelines
-- Generator output formats
+- [Gas Town Extension Architecture](docs/gastown-extension.md) — detailed design
+- [Host Bridge Protocol](docs/host-bridge.md) — postMessage wire format
+- [Security](docs/security.md) — sandboxing and permissions
+- [Manifest Format](docs/manifest.md) — kind 30033 event structure
+
+## Related
+
+- [Gas Town Nostr Protocol Spec](../../gastown/docs/design/nostr-protocol.md)
+- [Gas Town Docker Deployment](../../gastown/docs/DOCKER.md)
+- [Flotilla Extension Developer Guide](../../flotilla/docs/extensions/README.md)
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT

@@ -12,6 +12,11 @@
     type ProtocolEventContent,
     type WorkItemContent,
     type QueueDefContent,
+    type GroupDefContent,
+    type ChannelDefContent,
+    type DirectMessage,
+    type ChannelMessage,
+    type ChannelMetadata,
   } from '@flotilla/ext-shared';
 
   import ActivityView from './views/ActivityView.svelte';
@@ -20,14 +25,20 @@
   import IssuesView from './views/IssuesView.svelte';
   import WorkQueueView from './views/WorkQueueView.svelte';
   import ProtocolView from './views/ProtocolView.svelte';
+  import ChatView from './views/ChatView.svelte';
+  import ChannelsView from './views/ChannelsView.svelte';
+  import GroupsView from './views/GroupsView.svelte';
 
-  type Tab = 'activity' | 'agents' | 'convoys' | 'issues' | 'workqueue' | 'protocol';
+  type Tab = 'activity' | 'agents' | 'convoys' | 'issues' | 'workqueue' | 'protocol' | 'chat' | 'channels' | 'groups';
 
   const TABS: { id: Tab; label: string; icon: string }[] = [
     { id: 'activity', label: 'Activity', icon: '📋' },
     { id: 'agents', label: 'Agents', icon: '🤖' },
+    { id: 'chat', label: 'Chat', icon: '💬' },
+    { id: 'channels', label: 'Channels', icon: '📢' },
     { id: 'convoys', label: 'Convoys', icon: '🚢' },
     { id: 'issues', label: 'Issues', icon: '📝' },
+    { id: 'groups', label: 'Groups', icon: '👥' },
     { id: 'workqueue', label: 'Work Queue', icon: '📥' },
     { id: 'protocol', label: 'Protocol', icon: '📡' },
   ];
@@ -35,8 +46,9 @@
   // State
   let stores = $state<GTStoreManager | null>(null);
   let activeTab = $state<Tab>('agents');
-  let status = $state('Initializing...');
-  let connected = $state(false);
+  let status = $state<'connecting' | 'connected' | 'error'>('connecting');
+  let statusMessage = $state('Connecting...');
+  let userPubkey = $state<string | undefined>(undefined);
 
   // Reactive store subscriptions
   let logs = $state<ParsedGTEvent<LogStatusContent>[]>([]);
@@ -46,17 +58,19 @@
   let protocol = $state<ParsedGTEvent<ProtocolEventContent>[]>([]);
   let workItems = $state<ParsedGTEvent<WorkItemContent>[]>([]);
   let queues = $state<ParsedGTEvent<QueueDefContent>[]>([]);
-  let loading = $state(false);
+  let groupsList = $state<ParsedGTEvent<GroupDefContent>[]>([]);
+  let directMessages = $state<DirectMessage[]>([]);
+  let channelsMeta = $state<ChannelMetadata[]>([]);
+  let channelMessages = $state<Map<string, ChannelMessage[]>>(new Map());
+  let activeChannelId = $state<string | null>(null);
+  let isReady = $state(false);
   let storeError = $state<string | null>(null);
 
-  // Default relays (overridden by host context)
-  const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol'];
-
-  function initStores(b: WidgetBridge, relays: string[]) {
+  function connectStores(b: WidgetBridge, relays: string[], pubkey?: string) {
     const s = createGTStores(b, relays);
     stores = s;
 
-    // Subscribe to all stores
+    // Subscribe to all reactive stores
     s.logs.subscribe(v => { logs = v; });
     s.agents.subscribe(v => { agents = v; });
     s.convoys.subscribe(v => { convoys = v; });
@@ -64,57 +78,53 @@
     s.protocol.subscribe(v => { protocol = v; });
     s.workItems.subscribe(v => { workItems = v; });
     s.queues.subscribe(v => { queues = v; });
-    s.loading.subscribe(v => { loading = v; });
+    s.groups.subscribe(v => { groupsList = v; });
+    s.directMessages.subscribe(v => { directMessages = v; });
+    s.channelMeta.subscribe(v => { channelsMeta = v; });
+    s.channelMessages.subscribe(v => { channelMessages = v; });
+    s.activeChannelId.subscribe(v => { activeChannelId = v; });
+    s.ready.subscribe(v => {
+      isReady = v;
+      if (v) {
+        status = 'connected';
+        statusMessage = 'Connected — live';
+      }
+    });
     s.error.subscribe(v => { storeError = v; });
 
-    // Initial fetch
-    void s.refresh();
+    // Open relay subscriptions (events stream in via nostr:event push)
+    void s.connect({ userPubkey: pubkey });
   }
 
-  // Initialize bridge
+  // Initialize bridge and wait for host context
   $effect(() => {
     const b = createWidgetBridge({
       targetWindow: window.parent,
       targetOrigin: '*',
-      timeoutMs: 15000,
     });
 
-    status = 'Bridge ready. Waiting for host context...';
+    statusMessage = 'Waiting for host context...';
 
     const offContext = b.onEvent('context:update', (ctx) => {
-      connected = true;
-
       const relays = Array.isArray(ctx?.relays) && ctx.relays.length > 0
         ? ctx.relays
-        : DEFAULT_RELAYS;
+        : null;
 
-      status = 'Connected to Gas Town';
-      initStores(b, relays);
+      if (!relays) {
+        status = 'error';
+        statusMessage = 'No relays provided by host';
+        return;
+      }
+
+      userPubkey = typeof ctx?.userPubkey === 'string' ? ctx.userPubkey : undefined;
+      connectStores(b, relays, userPubkey);
     });
 
-    // If no context arrives within 3s, initialize with defaults
-    const fallbackTimer = setTimeout(() => {
-      if (!connected) {
-        status = 'Using default relays (no host context)';
-        initStores(b, DEFAULT_RELAYS);
-        connected = true;
-      }
-    }, 3000);
-
     return () => {
-      clearTimeout(fallbackTimer);
       offContext();
+      stores?.disconnect();
       b.destroy();
     };
-  });
-
-  // Auto-refresh every 30s
-  $effect(() => {
-    if (!stores) return;
-    const interval = setInterval(() => {
-      stores?.refresh();
-    }, 30000);
-    return () => clearInterval(interval);
   });
 </script>
 
@@ -125,13 +135,10 @@
       <h1>Gas Town</h1>
     </div>
     <div class="header-right">
-      <span class="status-indicator" class:connected>
+      <span class="status-indicator" class:connected={status === 'connected'} class:error={status === 'error'}>
         <span class="dot"></span>
-        {status}
+        {statusMessage}
       </span>
-      {#if loading}
-        <span class="loading-spinner"></span>
-      {/if}
     </div>
   </header>
 
@@ -142,34 +149,56 @@
     </div>
   {/if}
 
-  <nav class="tab-bar">
-    {#each TABS as tab (tab.id)}
-      <button
-        class="tab"
-        class:active={activeTab === tab.id}
-        onclick={() => { activeTab = tab.id; }}
-      >
-        <span class="tab-icon">{tab.icon}</span>
-        <span class="tab-label">{tab.label}</span>
-      </button>
-    {/each}
-  </nav>
+  {#if status === 'error'}
+    <div class="error-banner">
+      <strong>{statusMessage}</strong>
+      <p>Ensure the Flotilla host provides relay URLs via <code>context:update</code>.</p>
+    </div>
+  {:else}
+    <nav class="tab-bar">
+      {#each TABS as tab (tab.id)}
+        <button
+          class="tab"
+          class:active={activeTab === tab.id}
+          onclick={() => { activeTab = tab.id; }}
+        >
+          <span class="tab-icon">{tab.icon}</span>
+          <span class="tab-label">{tab.label}</span>
+        </button>
+      {/each}
+    </nav>
 
-  <main class="tab-content">
-    {#if activeTab === 'activity'}
-      <ActivityView events={logs} onRefresh={() => stores?.refreshLogs()} />
-    {:else if activeTab === 'agents'}
-      <AgentsView {agents} onRefresh={() => stores?.refreshAgents()} />
-    {:else if activeTab === 'convoys'}
-      <ConvoysView {convoys} onRefresh={() => stores?.refreshConvoys()} />
-    {:else if activeTab === 'issues'}
-      <IssuesView {issues} onRefresh={() => stores?.refreshIssues()} />
-    {:else if activeTab === 'workqueue'}
-      <WorkQueueView {workItems} {queues} onRefresh={() => { stores?.refreshWorkItems(); stores?.refreshQueues(); }} />
-    {:else if activeTab === 'protocol'}
-      <ProtocolView events={protocol} onRefresh={() => stores?.refreshProtocol()} />
-    {/if}
-  </main>
+    <main class="tab-content">
+      {#if !isReady}
+        <div class="loading-state">
+          <span class="loading-spinner"></span>
+          <p>Loading initial state from relays...</p>
+        </div>
+      {:else if activeTab === 'activity'}
+        <ActivityView events={logs} />
+      {:else if activeTab === 'agents'}
+        <AgentsView {agents} />
+      {:else if activeTab === 'chat'}
+        {#if stores}
+          <ChatView messages={directMessages} {stores} {userPubkey} />
+        {/if}
+      {:else if activeTab === 'channels'}
+        {#if stores}
+          <ChannelsView {channelsMeta} {channelMessages} {activeChannelId} {stores} />
+        {/if}
+      {:else if activeTab === 'convoys'}
+        <ConvoysView {convoys} />
+      {:else if activeTab === 'issues'}
+        <IssuesView {issues} />
+      {:else if activeTab === 'groups'}
+        <GroupsView groups={groupsList} />
+      {:else if activeTab === 'workqueue'}
+        <WorkQueueView {workItems} {queues} />
+      {:else if activeTab === 'protocol'}
+        <ProtocolView events={protocol} />
+      {/if}
+    </main>
+  {/if}
 </div>
 
 <style>
@@ -239,10 +268,24 @@
     background: #28a745;
   }
 
+  .status-indicator.error .dot {
+    background: #dc3545;
+  }
+
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    color: #888;
+    gap: 1rem;
+  }
+
   .loading-spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid #dee2e6;
+    width: 24px;
+    height: 24px;
+    border: 3px solid #dee2e6;
     border-top-color: #007bff;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
@@ -263,6 +306,18 @@
     color: #721c24;
     font-size: 0.85rem;
     margin: 0.5rem 0;
+  }
+
+  .error-banner p {
+    margin: 0;
+    font-size: 0.8rem;
+  }
+
+  .error-banner code {
+    background: rgba(0,0,0,0.05);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.8rem;
   }
 
   .btn-dismiss {

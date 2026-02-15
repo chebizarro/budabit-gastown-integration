@@ -1,138 +1,151 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Extension', () => {
-  test('should render Smart Widget UI', async ({ page }) => {
+test.describe('Gas Town Dashboard', () => {
+  test('should render the dashboard with Gas Town branding', async ({ page }) => {
     await page.goto('/');
 
-    await expect(page.locator('h1')).toContainText('Smart Widget');
-    await expect(page.locator('.status')).toContainText('Ready');
-
-    await expect(page.locator('button:has-text("Publish")')).toBeVisible();
-    await expect(page.locator('button:has-text("Show Toast")')).toBeVisible();
-    await expect(page.locator('input[type="text"]')).toBeVisible();
+    await expect(page.locator('h1')).toContainText('Gas Town');
+    await expect(page.locator('.status-indicator')).toBeVisible();
   });
 
-  test('should handle context:update event from host (optional demo)', async ({ page }) => {
+  test('should show all navigation tabs', async ({ page }) => {
     await page.goto('/');
 
+    const expectedTabs = ['Activity', 'Agents', 'Chat', 'Channels', 'Convoys', 'Issues', 'Groups', 'Work Queue', 'Protocol'];
+    for (const label of expectedTabs) {
+      await expect(page.locator(`.tab:has-text("${label}")`)).toBeVisible();
+    }
+  });
+
+  test('should show connecting state initially', async ({ page }) => {
+    await page.goto('/');
+
+    await expect(page.locator('.status-indicator')).toContainText('Waiting for host context');
+  });
+
+  test('should show error state when no relays provided', async ({ page }) => {
+    await page.goto('/');
+
+    // Send context with no relays
     await page.evaluate(() => {
       window.postMessage(
         {
           type: 'event',
           action: 'context:update',
           payload: {
-            contextId: 'test-room-123',
-            userPubkey: 'test-pubkey-abc123',
-            relays: ['wss://relay.damus.io'],
+            contextId: 'test',
+            userPubkey: 'pk-123',
+            relays: [],
           },
         },
         '*'
       );
     });
 
-    await expect(page.locator('.status')).toContainText('Connected');
-    await expect(page.locator('.context')).toBeVisible();
-    await expect(page.locator('.context')).toContainText('test-room-123');
-    await expect(page.locator('.context')).toContainText('test-pubkey-abc123');
-    await expect(page.locator('.context')).toContainText('wss://relay.damus.io');
+    await expect(page.locator('.status-indicator.error')).toBeVisible();
+    await expect(page.locator('.error-banner')).toContainText('No relays provided');
   });
 
-  test('should send nostr:publish request and handle host response', async ({ page }) => {
+  test('should attempt subscription when relays are provided', async ({ page }) => {
     await page.goto('/');
 
+    // Track outgoing bridge requests
     await page.evaluate(() => {
-      (window as any).__sentRequests = [];
-
+      (window as any).__bridgeRequests = [];
       window.addEventListener('message', (event) => {
         const data = event.data as any;
         if (!data || typeof data !== 'object') return;
         if (data.type !== 'request') return;
-        if (typeof data.action !== 'string') return;
-        if (typeof data.id !== 'string') return;
-
-        (window as any).__sentRequests.push(data);
+        (window as any).__bridgeRequests.push(data);
       });
     });
 
-    await page.locator('input[type="text"]').fill('Hello from e2e!');
-    await page.locator('button:has-text("Publish")').click();
-
-    await page.waitForFunction(() => {
-      const reqs = (window as any).__sentRequests;
-      return Array.isArray(reqs) && reqs.some((m: any) => m.action === 'nostr:publish');
-    });
-
-    const requestMsg = await page.evaluate(() => {
-      const reqs = (window as any).__sentRequests as any[];
-      return reqs.find((m) => m.action === 'nostr:publish') ?? null;
-    });
-
-    expect(requestMsg).not.toBeNull();
-    expect(requestMsg.action).toBe('nostr:publish');
-    expect(typeof requestMsg.id).toBe('string');
-
-    await page.evaluate((id: string) => {
+    // Send context with relays
+    await page.evaluate(() => {
       window.postMessage(
         {
-          type: 'response',
-          id,
-          action: 'nostr:publish',
-          payload: { status: 'ok' },
+          type: 'event',
+          action: 'context:update',
+          payload: {
+            contextId: 'test-room',
+            userPubkey: 'pk-abc',
+            relays: ['wss://relay.example.com'],
+          },
         },
         '*'
       );
-    }, requestMsg.id);
+    });
 
-    await expect(page.locator('.status')).toContainText('Published successfully');
-    await expect(page.locator('input[type="text"]')).toHaveValue('');
-    await expect(page.locator('.result')).toContainText('ok');
+    // Wait for subscribe requests
+    await page.waitForFunction(() => {
+      const reqs = (window as any).__bridgeRequests;
+      return Array.isArray(reqs) && reqs.some((m: any) => m.action === 'nostr:subscribe');
+    }, undefined, { timeout: 5000 });
+
+    const subRequest = await page.evaluate(() => {
+      const reqs = (window as any).__bridgeRequests as any[];
+      return reqs.find((m) => m.action === 'nostr:subscribe') ?? null;
+    });
+
+    expect(subRequest).not.toBeNull();
+    expect(subRequest.action).toBe('nostr:subscribe');
+    expect(subRequest.payload.relays).toContain('wss://relay.example.com');
   });
 
-  test('should send ui:toast request and handle host response', async ({ page }) => {
+  test('should switch tabs on click', async ({ page }) => {
     await page.goto('/');
 
+    // Provide context and simulate EOSE to get to ready state
     await page.evaluate(() => {
-      (window as any).__sentRequests = [];
+      window.postMessage(
+        { type: 'event', action: 'context:update', payload: { relays: ['wss://r.example.com'] } },
+        '*'
+      );
+    });
 
+    // Respond to subscribe requests and send EOSE
+    await page.evaluate(() => {
       window.addEventListener('message', (event) => {
         const data = event.data as any;
-        if (!data || typeof data !== 'object') return;
-        if (data.type !== 'request') return;
-        if (typeof data.action !== 'string') return;
-        if (typeof data.id !== 'string') return;
+        if (!data || data.type !== 'request') return;
 
-        (window as any).__sentRequests.push(data);
+        if (data.action === 'nostr:subscribe') {
+          window.postMessage(
+            { type: 'response', id: data.id, action: data.action, payload: { status: 'ok', subId: data.payload.id } },
+            '*'
+          );
+          // Send EOSE after short delay
+          setTimeout(() => {
+            window.postMessage(
+              { type: 'event', action: 'nostr:eose', payload: { subId: data.payload.id } },
+              '*'
+            );
+          }, 50);
+        }
       });
     });
 
-    await page.locator('button:has-text("Show Toast")').click();
+    // Wait for ready state
+    await expect(page.locator('.status-indicator')).toContainText('live', { timeout: 5000 });
 
-    await page.waitForFunction(() => {
-      const reqs = (window as any).__sentRequests;
-      return Array.isArray(reqs) && reqs.some((m: any) => m.action === 'ui:toast');
-    });
+    // Click Issues tab
+    await page.locator('.tab:has-text("Issues")').click();
+    await expect(page.locator('.view-header h2')).toContainText('Issues');
 
-    const requestMsg = await page.evaluate(() => {
-      const reqs = (window as any).__sentRequests as any[];
-      return reqs.find((m) => m.action === 'ui:toast') ?? null;
-    });
+    // Click Activity tab
+    await page.locator('.tab:has-text("Activity")').click();
+    await expect(page.locator('.view-header h2')).toContainText('Activity');
 
-    expect(requestMsg).not.toBeNull();
-    expect(requestMsg.action).toBe('ui:toast');
-    expect(typeof requestMsg.id).toBe('string');
+    // Click Chat tab
+    await page.locator('.tab:has-text("Chat")').click();
+    await expect(page.locator('.view-header h2')).toContainText('Direct Messages');
 
-    await page.evaluate((id: string) => {
-      window.postMessage(
-        {
-          type: 'response',
-          id,
-          action: 'ui:toast',
-          payload: { status: 'ok' },
-        },
-        '*'
-      );
-    }, requestMsg.id);
+    // Click Channels tab
+    await page.locator('.tab:has-text("Channels")').click();
+    await expect(page.locator('.view-header h2')).toContainText('Channels');
 
-    await expect(page.locator('.status')).toContainText('Toast requested');
+    // Click Groups tab
+    await page.locator('.tab:has-text("Groups")').click();
+    await expect(page.locator('.view-header h2')).toContainText('Groups');
   });
 });

@@ -10,10 +10,8 @@ export const GT_WIDGET_IDENTIFIER = 'gastown-dashboard';
 export const GT_WIDGET_PERMISSIONS: WidgetPermission[] = [
   'nostr:publish',
   'nostr:query',
-  'storage:get',
-  'storage:set',
-  'storage:remove',
-  'storage:keys',
+  'nostr:subscribe',
+  'nostr:unsubscribe',
   'ui:toast',
 ];
 

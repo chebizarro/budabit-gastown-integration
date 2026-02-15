@@ -14,6 +14,11 @@ import {
   KIND_GT_QUEUE_DEF,
   KIND_GT_CHANNEL_DEF,
   KIND_GT_WORK_ITEM,
+  KIND_DM,
+  KIND_CHANNEL_CREATE,
+  KIND_CHANNEL_META,
+  KIND_CHANNEL_MESSAGE,
+  KIND_GIFT_WRAP,
   GT_PROTOCOL_VERSION,
 } from './kinds.js';
 
@@ -191,6 +196,99 @@ export function allStateFilter(opts?: {
     ],
   };
   if (opts?.rig) f['#rig'] = [opts.rig];
+  if (opts?.since) f.since = opts.since;
+  return f;
+}
+
+// --- NIP-17 Direct Message filters (no #gt tag — these are standard Nostr events) ---
+
+/**
+ * Filter for NIP-17 direct messages (kind 14, delivered via kind 1059 gift wrap).
+ *
+ * NOTE: NIP-17 DMs are gift-wrapped (kind 1059). The actual kind-14 events are
+ * inside the sealed rumor. The host bridge handles unwrapping; we subscribe to
+ * the gift wraps addressed to our pubkey.
+ */
+export function dmGiftWrapFilter(opts: {
+  recipientPubkey: string;
+  since?: number;
+  limit?: number;
+}): NostrFilter {
+  const f: NostrFilter = {
+    kinds: [KIND_GIFT_WRAP],
+    '#p': [opts.recipientPubkey],
+  };
+  if (opts.since) f.since = opts.since;
+  if (opts.limit) f.limit = opts.limit;
+  return f;
+}
+
+/**
+ * Filter for unwrapped NIP-17 DMs (kind 14) — used when the host provides
+ * already-decrypted events via subscription push.
+ */
+export function dmFilter(opts?: {
+  authors?: string[];
+  since?: number;
+  limit?: number;
+}): NostrFilter {
+  const f: NostrFilter = {
+    kinds: [KIND_DM],
+  };
+  if (opts?.authors) f.authors = opts.authors;
+  if (opts?.since) f.since = opts.since;
+  if (opts?.limit) f.limit = opts.limit;
+  return f;
+}
+
+// --- NIP-28 Channel filters ---
+
+/** Filter for channel creation events (kind 40). */
+export function channelCreateFilter(opts?: {
+  since?: number;
+  limit?: number;
+}): NostrFilter {
+  const f: NostrFilter = {
+    kinds: [KIND_CHANNEL_CREATE],
+  };
+  if (opts?.since) f.since = opts.since;
+  if (opts?.limit) f.limit = opts.limit;
+  return f;
+}
+
+/** Filter for channel metadata updates (kind 41). */
+export function channelMetaFilter(opts?: {
+  channelId?: string;
+}): NostrFilter {
+  const f: NostrFilter = {
+    kinds: [KIND_CHANNEL_META],
+  };
+  if (opts?.channelId) f['#e'] = [opts.channelId];
+  return f;
+}
+
+/** Filter for channel messages (kind 42) in a specific channel. */
+export function channelMessageFilter(opts: {
+  channelId: string;
+  since?: number;
+  limit?: number;
+}): NostrFilter {
+  const f: NostrFilter = {
+    kinds: [KIND_CHANNEL_MESSAGE],
+    '#e': [opts.channelId],
+  };
+  if (opts.since) f.since = opts.since;
+  if (opts.limit) f.limit = opts.limit;
+  return f;
+}
+
+/** Combined filter for all NIP-28 channel metadata (kind 40 + 41). */
+export function allChannelMetaFilter(opts?: {
+  since?: number;
+}): NostrFilter {
+  const f: NostrFilter = {
+    kinds: [KIND_CHANNEL_CREATE, KIND_CHANNEL_META],
+  };
   if (opts?.since) f.since = opts.since;
   return f;
 }

@@ -1,61 +1,34 @@
-# @flotilla/ext-worker
+# @flotilla/ext-worker — Gas Town Worker Bridge
 
-Headless worker bridge for Flotilla extensions.
+Headless worker bridge for Gas Town background processing. Uses the same Flotilla wire protocol
+(`{ type, action, payload, id }`) as the iframe bridge but without DOM dependencies.
 
-## Purpose
+## Use Cases
 
-This package provides a worker-based bridge for extensions that need to run background logic without DOM access. Use cases include:
-
-- Service worker integration
-- Background processing
-- Headless signaling coordination
-- Testing without browser environment
+- **Event aggregation**: Pre-process relay events before forwarding to the UI thread
+- **Offline spool**: Queue events when relays are unreachable, drain when they reconnect
+- **Headless agents**: Service-worker based agent coordination
 
 ## Usage
 
-### In a Web Worker
-
 ```typescript
 import { createWorkerBridge } from '@flotilla/ext-worker';
+
+declare const self: DedicatedWorkerGlobalScope;
 
 const bridge = createWorkerBridge((message) => {
   self.postMessage(message);
 });
 
 self.addEventListener('message', (event) => {
-  bridge.handleMessage(event.data);
+  void bridge.handleMessage(event.data);
 });
 
-// Send ready signal
-bridge.send({ type: 'ready' });
-```
-
-### From the Host
-
-```typescript
-const worker = new Worker('/worker.js');
-
-worker.postMessage({
-  type: 'config',
-  config: {
-    contextId: 'room-123',
-    userPubkey: 'abc...',
-  },
+// Subscribe to nostr:event pushes
+bridge.onEvent('nostr:event', (payload) => {
+  // Process incoming relay events
 });
 
-worker.addEventListener('message', (event) => {
-  console.log('Worker sent:', event.data);
-});
-```
-
-## Status
-
-⚠️ **Stubbed Implementation**
-
-This package is currently a stub. Uncomment and customize the worker code in `src/index.ts` to enable it for your extension.
-
-## Building
-
-```bash
-pnpm --filter @flotilla/ext-worker build
+// Send requests to host
+await bridge.request('nostr:publish', { kind: 1, content: 'hello', tags: [], created_at: 0 });
 ```

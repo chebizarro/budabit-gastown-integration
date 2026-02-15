@@ -4,10 +4,9 @@
 
   type Props = {
     agents: ParsedGTEvent<LifecycleContent>[];
-    onRefresh: () => void;
   };
 
-  const { agents, onRefresh }: Props = $props();
+  const { agents }: Props = $props();
 
   const agentsByStatus = $derived.by(() => {
     const groups: Record<string, ParsedGTEvent<LifecycleContent>[]> = {
@@ -52,7 +51,7 @@
         <span class="dot" style="background:{statusColor('dead')}"></span>
         {agentsByStatus.dead?.length ?? 0} dead
       </span>
-      <button class="btn-sm" onclick={onRefresh}>↻</button>
+      <span class="live-badge">● live</span>
     </div>
   </div>
 
@@ -125,15 +124,11 @@
   .header-stats { display: flex; gap: 0.75rem; align-items: center; }
   .stat { font-size: 0.8rem; color: #555; display: flex; align-items: center; gap: 0.25rem; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .btn-sm {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.85rem;
-    background: #e9ecef;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
-    cursor: pointer;
+  .live-badge {
+    font-size: 0.75rem;
+    color: #28a745;
+    font-weight: 600;
   }
-  .btn-sm:hover { background: #dee2e6; }
   .empty { color: #999; text-align: center; padding: 2rem; }
   .agent-grid {
     display: grid;

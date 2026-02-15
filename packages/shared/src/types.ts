@@ -88,12 +88,51 @@ export type NostrPublishResponse = { status: 'ok'; result?: unknown } | BridgeEr
 /**
  * Nostr query request payload. Matches Flotilla's `nostr:query` bridge handler.
  */
+/** Wire-format Nostr filter (serializable via postMessage). */
+export type NostrFilterWire = Record<string, unknown>;
+
 export type NostrQueryRequest = {
   relays: string[];
-  filter: Record<string, unknown>;
+  filter: NostrFilterWire;
 };
 
 export type NostrQueryResponse = { status: 'ok'; events: unknown[] } | BridgeError;
+
+/**
+ * Nostr subscribe request — opens a persistent relay subscription.
+ * The host pushes events via `nostr:event` and signals end-of-stored-events via `nostr:eose`.
+ */
+export type NostrSubscribeRequest = {
+  id: string;
+  relays: string[];
+  filters: NostrFilterWire[];
+};
+
+export type NostrSubscribeResponse = { status: 'ok'; subId: string } | BridgeError;
+
+/**
+ * Nostr unsubscribe request — closes a subscription by ID.
+ */
+export type NostrUnsubscribeRequest = {
+  subId: string;
+};
+
+export type NostrUnsubscribeResponse = { status: 'ok' } | BridgeError;
+
+/**
+ * Host-pushed event from an active subscription.
+ */
+export type NostrEventPush = {
+  subId: string;
+  event: Record<string, unknown>;
+};
+
+/**
+ * Host-pushed end-of-stored-events signal for a subscription.
+ */
+export type NostrEosePush = {
+  subId: string;
+};
 
 /**
  * Action map used by the canonical Smart Widget starter kit.
@@ -120,6 +159,24 @@ export interface WidgetActionMap {
 
   'context:update': {
     event: WidgetContext;
+  };
+
+  'nostr:subscribe': {
+    req: NostrSubscribeRequest;
+    res: NostrSubscribeResponse;
+  };
+
+  'nostr:unsubscribe': {
+    req: NostrUnsubscribeRequest;
+    res: NostrUnsubscribeResponse;
+  };
+
+  'nostr:event': {
+    event: NostrEventPush;
+  };
+
+  'nostr:eose': {
+    event: NostrEosePush;
   };
 }
 

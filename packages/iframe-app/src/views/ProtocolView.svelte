@@ -4,16 +4,15 @@
 
   type Props = {
     events: ParsedGTEvent<ProtocolEventContent>[];
-    onRefresh: () => void;
   };
 
-  const { events, onRefresh }: Props = $props();
+  const { events }: Props = $props();
 </script>
 
 <section class="view">
   <div class="view-header">
     <h2>Protocol Events</h2>
-    <button class="btn-sm" onclick={onRefresh}>↻ Refresh</button>
+    <span class="live-badge">● live</span>
   </div>
 
   {#if events.length === 0}
@@ -68,15 +67,11 @@
     margin-bottom: 1rem;
   }
   .view-header h2 { margin: 0; font-size: 1.2rem; }
-  .btn-sm {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.85rem;
-    background: #e9ecef;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
-    cursor: pointer;
+  .live-badge {
+    font-size: 0.75rem;
+    color: #28a745;
+    font-weight: 600;
   }
-  .btn-sm:hover { background: #dee2e6; }
   .empty { color: #999; text-align: center; padding: 2rem; }
   .event-list { display: flex; flex-direction: column; gap: 0.5rem; }
   .event-row {

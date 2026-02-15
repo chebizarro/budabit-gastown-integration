@@ -1,11 +1,13 @@
 /**
- * Reactive GT event stores for the iframe widget.
+ * Reactive GT event stores backed by real-time Nostr subscriptions.
  *
- * These stores use the WidgetBridge to query the host for GT events
- * and maintain local state that Svelte components can subscribe to.
+ * No polling. No timeouts. Events arrive via the host bridge's
+ * `nostr:subscribe` action, which pushes `nostr:event` messages
+ * as they arrive from relay subscriptions.
  */
 
 import type { WidgetBridge } from '../bridge.js';
+import type { NostrEventPush, NostrEosePush } from '../types.js';
 import type { NostrFilter } from './filters.js';
 import type { GTNostrEvent, ParsedGTEvent } from './types.js';
 import type {
@@ -16,6 +18,11 @@ import type {
   ProtocolEventContent,
   WorkItemContent,
   QueueDefContent,
+  GroupDefContent,
+  ChannelDefContent,
+  DirectMessage,
+  ChannelMessage,
+  ChannelMetadata,
 } from './types.js';
 import { parseGTEvent, deduplicateReplaceable, sortByTimestamp } from './parser.js';
 import {
@@ -26,7 +33,28 @@ import {
   protocolFilter,
   workItemFilter,
   queueDefFilter,
+  groupDefFilter,
+  channelDefFilter,
+  allStateFilter,
+  dmGiftWrapFilter,
+  channelMessageFilter,
+  allChannelMetaFilter,
 } from './filters.js';
+import {
+  KIND_LOG_STATUS,
+  KIND_LIFECYCLE,
+  KIND_GT_CONVOY_STATE,
+  KIND_GT_BEADS_ISSUE_STATE,
+  KIND_GT_PROTOCOL_EVENT,
+  KIND_GT_WORK_ITEM,
+  KIND_GT_QUEUE_DEF,
+  KIND_GT_GROUP_DEF,
+  KIND_GT_CHANNEL_DEF,
+  KIND_DM,
+  KIND_CHANNEL_CREATE,
+  KIND_CHANNEL_META,
+  KIND_CHANNEL_MESSAGE,
+} from './kinds.js';
 
 export type StoreListener<T> = (value: T) => void;
 
@@ -65,50 +93,7 @@ export class GTStore<T> {
   }
 }
 
-interface QueryResult {
-  status: string;
-  events?: GTNostrEvent[];
-  error?: string;
-}
-
-/**
- * Query GT events via the host bridge's nostr:query action.
- */
-async function queryGTEvents(
-  bridge: WidgetBridge,
-  relays: string[],
-  filter: NostrFilter,
-): Promise<GTNostrEvent[]> {
-  const result = (await bridge.request('nostr:query', {
-    relays,
-    filter,
-  })) as QueryResult;
-
-  if (result?.error) {
-    throw new Error(result.error);
-  }
-
-  return (result?.events ?? []) as GTNostrEvent[];
-}
-
-/**
- * Parse and deduplicate a batch of raw events for replaceable kinds.
- */
-function parseAndDeduplicate<T>(
-  rawEvents: GTNostrEvent[],
-  replaceable = true,
-): ParsedGTEvent<T>[] {
-  const parsed = rawEvents
-    .map(e => parseGTEvent<T>(e))
-    .filter((e): e is ParsedGTEvent<T> => e !== null);
-
-  if (replaceable) {
-    return sortByTimestamp(deduplicateReplaceable(parsed));
-  }
-  return sortByTimestamp(parsed);
-}
-
-// --- Store factories ---
+// --- Subscription-based store manager ---
 
 export interface GTStoreManager {
   /** Activity log entries (kind 30315). */
@@ -125,25 +110,123 @@ export interface GTStoreManager {
   workItems: GTStore<ParsedGTEvent<WorkItemContent>[]>;
   /** Queue definitions (kind 30322). */
   queues: GTStore<ParsedGTEvent<QueueDefContent>[]>;
-  /** Loading state. */
-  loading: GTStore<boolean>;
+  /** Group definitions (kind 30321). */
+  groups: GTStore<ParsedGTEvent<GroupDefContent>[]>;
+  /** Channel definitions (kind 30323). */
+  channels: GTStore<ParsedGTEvent<ChannelDefContent>[]>;
+  /** NIP-17 direct messages (kind 14, unwrapped from gift wraps). */
+  directMessages: GTStore<DirectMessage[]>;
+  /** NIP-28 channel metadata (kind 40/41). */
+  channelMeta: GTStore<ChannelMetadata[]>;
+  /** NIP-28 channel messages (kind 42), keyed by channel ID. */
+  channelMessages: GTStore<Map<string, ChannelMessage[]>>;
+  /** Currently selected channel ID for message subscription. */
+  activeChannelId: GTStore<string | null>;
+  /** Whether initial EOSE has been received. */
+  ready: GTStore<boolean>;
   /** Last error. */
   error: GTStore<string | null>;
 
-  /** Fetch all stores from relays. */
-  refresh(opts?: { rig?: string; since?: number }): Promise<void>;
-  /** Fetch a single store category. */
-  refreshLogs(opts?: { rig?: string; since?: number; limit?: number }): Promise<void>;
-  refreshAgents(opts?: { rig?: string }): Promise<void>;
-  refreshConvoys(opts?: { convoyId?: string }): Promise<void>;
-  refreshIssues(opts?: { rig?: string; status?: string; limit?: number }): Promise<void>;
-  refreshProtocol(opts?: { since?: number; limit?: number }): Promise<void>;
-  refreshWorkItems(opts?: { queue?: string; status?: string }): Promise<void>;
-  refreshQueues(): Promise<void>;
+  /** Open relay subscriptions. Call once on mount. */
+  connect(opts?: { rig?: string; userPubkey?: string }): Promise<void>;
+  /** Close all relay subscriptions. Call on unmount. */
+  disconnect(): void;
+  /** Subscribe to messages for a specific NIP-28 channel. */
+  openChannel(channelId: string): Promise<void>;
+  /** Close the channel message subscription. */
+  closeChannel(): void;
+  /** Send a DM via NIP-17 (publishes through bridge). */
+  sendDM(recipientPubkey: string, content: string): Promise<void>;
+  /** Send a message to a NIP-28 channel (publishes through bridge). */
+  sendChannelMessage(channelId: string, content: string): Promise<void>;
+}
+
+/** Max append-only events to retain per store (prevents unbounded growth). */
+const MAX_LOG_EVENTS = 500;
+const MAX_PROTOCOL_EVENTS = 200;
+const MAX_WORK_ITEMS = 500;
+const MAX_DM_MESSAGES = 500;
+const MAX_CHANNEL_MESSAGES = 200;
+
+/** Parse a raw event into a DirectMessage. */
+function parseDM(raw: GTNostrEvent): DirectMessage | null {
+  if (raw.kind !== KIND_DM) return null;
+  const pTag = raw.tags.find(t => t[0] === 'p');
+  const rootTag = raw.tags.find(t => t[0] === 'e' && t[3] === 'root');
+  const replyTag = raw.tags.find(t => t[0] === 'e' && t[3] === 'reply');
+  const subjectTag = raw.tags.find(t => t[0] === 'subject');
+
+  return {
+    id: raw.id,
+    pubkey: raw.pubkey,
+    content: raw.content,
+    created_at: raw.created_at,
+    recipientPubkey: pTag?.[1],
+    rootId: rootTag?.[1],
+    replyToId: replyTag?.[1],
+    subject: subjectTag?.[1],
+  };
+}
+
+/** Parse a raw event into a ChannelMessage. */
+function parseChannelMessage(raw: GTNostrEvent): ChannelMessage | null {
+  if (raw.kind !== KIND_CHANNEL_MESSAGE) return null;
+  // Root 'e' tag points to the channel creation event
+  const rootTag = raw.tags.find(t => t[0] === 'e' && (t[3] === 'root' || !t[3]));
+  if (!rootTag) return null;
+  const replyTag = raw.tags.find(t => t[0] === 'e' && t[3] === 'reply');
+
+  return {
+    id: raw.id,
+    pubkey: raw.pubkey,
+    content: raw.content,
+    created_at: raw.created_at,
+    channelId: rootTag[1],
+    replyToId: replyTag?.[1],
+  };
+}
+
+/** Parse a kind 40 or 41 event into ChannelMetadata. */
+function parseChannelMeta(raw: GTNostrEvent): ChannelMetadata | null {
+  if (raw.kind !== KIND_CHANNEL_CREATE && raw.kind !== KIND_CHANNEL_META) return null;
+
+  let meta: { name?: string; about?: string; picture?: string };
+  try {
+    meta = JSON.parse(raw.content) as { name?: string; about?: string; picture?: string };
+  } catch {
+    return null;
+  }
+
+  if (raw.kind === KIND_CHANNEL_CREATE) {
+    return {
+      id: raw.id,
+      name: meta.name ?? 'Unnamed Channel',
+      about: meta.about,
+      picture: meta.picture,
+      creationEventId: raw.id,
+      updatedAt: raw.created_at,
+    };
+  }
+
+  // Kind 41 — metadata update; the 'e' tag references the creation event
+  const eTag = raw.tags.find(t => t[0] === 'e');
+  if (!eTag) return null;
+
+  return {
+    id: eTag[1],
+    name: meta.name ?? 'Unnamed Channel',
+    about: meta.about,
+    picture: meta.picture,
+    creationEventId: eTag[1],
+    updatedAt: raw.created_at,
+  };
 }
 
 /**
- * Create a GT store manager bound to a bridge and relay set.
+ * Create a subscription-based GT store manager.
+ *
+ * Instead of polling, this opens persistent relay subscriptions via the host
+ * bridge. Events stream in real-time via `nostr:event` push messages.
  */
 export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreManager {
   const logs = new GTStore<ParsedGTEvent<LogStatusContent>[]>([]);
@@ -153,78 +236,288 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
   const protocol = new GTStore<ParsedGTEvent<ProtocolEventContent>[]>([]);
   const workItems = new GTStore<ParsedGTEvent<WorkItemContent>[]>([]);
   const queues = new GTStore<ParsedGTEvent<QueueDefContent>[]>([]);
-  const loading = new GTStore<boolean>(false);
+  const groups = new GTStore<ParsedGTEvent<GroupDefContent>[]>([]);
+  const channels = new GTStore<ParsedGTEvent<ChannelDefContent>[]>([]);
+  const directMessages = new GTStore<DirectMessage[]>([]);
+  const channelMeta = new GTStore<ChannelMetadata[]>([]);
+  const channelMessages = new GTStore<Map<string, ChannelMessage[]>>(new Map());
+  const activeChannelId = new GTStore<string | null>(null);
+  const ready = new GTStore<boolean>(false);
   const error = new GTStore<string | null>(null);
 
-  async function refreshLogs(opts?: { rig?: string; since?: number; limit?: number }) {
-    const raw = await queryGTEvents(bridge, relays, activityLogFilter({
-      rig: opts?.rig,
-      visibility: ['feed', 'both'],
-      since: opts?.since,
-      limit: opts?.limit ?? 100,
-    }));
-    logs.set(parseAndDeduplicate<LogStatusContent>(raw, false));
+  const activeSubIds: string[] = [];
+  const unsubHandlers: (() => void)[] = [];
+  let channelSubId: string | null = null;
+
+  function ingestEvent(raw: GTNostrEvent): void {
+    // --- NIP-17 DMs (kind 14) ---
+    if (raw.kind === KIND_DM) {
+      const dm = parseDM(raw);
+      if (dm) {
+        directMessages.update(prev => {
+          // Deduplicate by ID
+          if (prev.some(m => m.id === dm.id)) return prev;
+          const next = [...prev, dm].sort((a, b) => a.created_at - b.created_at);
+          return next.length > MAX_DM_MESSAGES ? next.slice(-MAX_DM_MESSAGES) : next;
+        });
+      }
+      return;
+    }
+
+    // --- NIP-28 Channel metadata (kind 40/41) ---
+    if (raw.kind === KIND_CHANNEL_CREATE || raw.kind === KIND_CHANNEL_META) {
+      const meta = parseChannelMeta(raw);
+      if (meta) {
+        channelMeta.update(prev => {
+          const existing = prev.findIndex(m => m.creationEventId === meta.creationEventId);
+          if (existing >= 0) {
+            // Keep newer metadata
+            if ((meta.updatedAt ?? 0) > (prev[existing].updatedAt ?? 0)) {
+              const next = [...prev];
+              next[existing] = meta;
+              return next;
+            }
+            return prev;
+          }
+          return [...prev, meta];
+        });
+      }
+      return;
+    }
+
+    // --- NIP-28 Channel messages (kind 42) ---
+    if (raw.kind === KIND_CHANNEL_MESSAGE) {
+      const msg = parseChannelMessage(raw);
+      if (msg) {
+        channelMessages.update(prev => {
+          const existing = prev.get(msg.channelId) ?? [];
+          if (existing.some(m => m.id === msg.id)) return prev;
+          const updated = [...existing, msg].sort((a, b) => a.created_at - b.created_at);
+          const capped = updated.length > MAX_CHANNEL_MESSAGES
+            ? updated.slice(-MAX_CHANNEL_MESSAGES)
+            : updated;
+          const next = new Map(prev);
+          next.set(msg.channelId, capped);
+          return next;
+        });
+      }
+      return;
+    }
+
+    // --- GT protocol events (require #gt tag) ---
+    const parsed = parseGTEvent(raw);
+    if (!parsed) return;
+
+    switch (parsed.kind) {
+      case KIND_LOG_STATUS: {
+        const typed = parsed as ParsedGTEvent<LogStatusContent>;
+        logs.update(prev => {
+          const next = [typed, ...prev];
+          return next.length > MAX_LOG_EVENTS ? next.slice(0, MAX_LOG_EVENTS) : next;
+        });
+        break;
+      }
+      case KIND_LIFECYCLE: {
+        const typed = parsed as ParsedGTEvent<LifecycleContent>;
+        agents.update(prev => deduplicateReplaceable([typed, ...prev]));
+        break;
+      }
+      case KIND_GT_CONVOY_STATE: {
+        const typed = parsed as ParsedGTEvent<ConvoyStateContent>;
+        convoys.update(prev => deduplicateReplaceable([typed, ...prev]));
+        break;
+      }
+      case KIND_GT_BEADS_ISSUE_STATE: {
+        const typed = parsed as ParsedGTEvent<BeadsIssueStateContent>;
+        issues.update(prev => deduplicateReplaceable([typed, ...prev]));
+        break;
+      }
+      case KIND_GT_PROTOCOL_EVENT: {
+        const typed = parsed as ParsedGTEvent<ProtocolEventContent>;
+        protocol.update(prev => {
+          const next = [typed, ...prev];
+          return next.length > MAX_PROTOCOL_EVENTS ? next.slice(0, MAX_PROTOCOL_EVENTS) : next;
+        });
+        break;
+      }
+      case KIND_GT_WORK_ITEM: {
+        const typed = parsed as ParsedGTEvent<WorkItemContent>;
+        workItems.update(prev => {
+          const next = [typed, ...prev];
+          return next.length > MAX_WORK_ITEMS ? next.slice(0, MAX_WORK_ITEMS) : next;
+        });
+        break;
+      }
+      case KIND_GT_QUEUE_DEF: {
+        const typed = parsed as ParsedGTEvent<QueueDefContent>;
+        queues.update(prev => deduplicateReplaceable([typed, ...prev]));
+        break;
+      }
+      case KIND_GT_GROUP_DEF: {
+        const typed = parsed as ParsedGTEvent<GroupDefContent>;
+        groups.update(prev => deduplicateReplaceable([typed, ...prev]));
+        break;
+      }
+      case KIND_GT_CHANNEL_DEF: {
+        const typed = parsed as ParsedGTEvent<ChannelDefContent>;
+        channels.update(prev => deduplicateReplaceable([typed, ...prev]));
+        break;
+      }
+    }
   }
 
-  async function refreshAgents(opts?: { rig?: string }) {
-    const raw = await queryGTEvents(bridge, relays, lifecycleFilter({ rig: opts?.rig }));
-    agents.set(parseAndDeduplicate<LifecycleContent>(raw, true));
-  }
-
-  async function refreshConvoys(opts?: { convoyId?: string }) {
-    const raw = await queryGTEvents(bridge, relays, convoyFilter({ convoyId: opts?.convoyId }));
-    convoys.set(parseAndDeduplicate<ConvoyStateContent>(raw, true));
-  }
-
-  async function refreshIssues(opts?: { rig?: string; status?: string; limit?: number }) {
-    const raw = await queryGTEvents(bridge, relays, issueFilter({
-      rig: opts?.rig,
-      status: opts?.status,
-      limit: opts?.limit ?? 200,
-    }));
-    issues.set(parseAndDeduplicate<BeadsIssueStateContent>(raw, true));
-  }
-
-  async function refreshProtocol(opts?: { since?: number; limit?: number }) {
-    const raw = await queryGTEvents(bridge, relays, protocolFilter({
-      since: opts?.since,
-      limit: opts?.limit ?? 50,
-    }));
-    protocol.set(parseAndDeduplicate<ProtocolEventContent>(raw, false));
-  }
-
-  async function refreshWorkItems(opts?: { queue?: string; status?: string }) {
-    const raw = await queryGTEvents(bridge, relays, workItemFilter({
-      queue: opts?.queue,
-      status: opts?.status,
-    }));
-    workItems.set(parseAndDeduplicate<WorkItemContent>(raw, false));
-  }
-
-  async function refreshQueues() {
-    const raw = await queryGTEvents(bridge, relays, queueDefFilter());
-    queues.set(parseAndDeduplicate<QueueDefContent>(raw, true));
-  }
-
-  async function refresh(opts?: { rig?: string; since?: number }) {
-    loading.set(true);
-    error.set(null);
+  async function openSubscription(
+    subLabel: string,
+    filters: NostrFilter[],
+  ): Promise<string | null> {
     try {
-      await Promise.all([
-        refreshLogs({ rig: opts?.rig, since: opts?.since }),
-        refreshAgents({ rig: opts?.rig }),
-        refreshConvoys(),
-        refreshIssues({ rig: opts?.rig }),
-        refreshProtocol({ since: opts?.since }),
-        refreshWorkItems(),
-        refreshQueues(),
-      ]);
+      const result = await bridge.request('nostr:subscribe', {
+        id: subLabel,
+        relays,
+        filters: filters as Record<string, unknown>[],
+      });
+
+      if (result && typeof result === 'object' && 'error' in result) {
+        throw new Error((result as { error: string }).error);
+      }
+
+      const subId = (result as { subId: string }).subId ?? subLabel;
+      activeSubIds.push(subId);
+      return subId;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      error.set(msg);
-    } finally {
-      loading.set(false);
+      error.set(`Subscription ${subLabel} failed: ${msg}`);
+      return null;
     }
+  }
+
+  async function closeSubscription(subId: string): Promise<void> {
+    try {
+      await bridge.request('nostr:unsubscribe', { subId });
+    } catch {
+      // Best-effort cleanup
+    }
+    const idx = activeSubIds.indexOf(subId);
+    if (idx >= 0) activeSubIds.splice(idx, 1);
+  }
+
+  async function connect(opts?: { rig?: string; userPubkey?: string }) {
+    error.set(null);
+
+    // Listen for pushed events from the host
+    const offEvent = bridge.onEvent('nostr:event', (payload: unknown) => {
+      const push = payload as NostrEventPush;
+      if (push?.event) {
+        ingestEvent(push.event as unknown as GTNostrEvent);
+      }
+    });
+    unsubHandlers.push(offEvent);
+
+    // Listen for EOSE to know when initial state is loaded
+    let eoseCount = 0;
+    const expectedSubs = opts?.userPubkey ? 4 : 3; // state + stream + channels (+ DMs if pubkey)
+    const offEose = bridge.onEvent('nostr:eose', (_payload: unknown) => {
+      eoseCount++;
+      if (eoseCount >= expectedSubs) {
+        ready.set(true);
+      }
+    });
+    unsubHandlers.push(offEose);
+
+    // 1. All replaceable GT state (lifecycle, convoys, issues, defs)
+    await openSubscription('gt-state', [
+      allStateFilter({ rig: opts?.rig }),
+    ]);
+
+    // 2. Append-only GT events (logs, protocol, work items) — limit initial backfill
+    const since = Math.floor(Date.now() / 1000) - 86400; // last 24h
+    await openSubscription('gt-stream', [
+      activityLogFilter({ rig: opts?.rig, visibility: ['feed', 'both'], since }),
+      protocolFilter({ since }),
+      workItemFilter({}),
+    ]);
+
+    // 3. NIP-28 channel metadata (kind 40 + 41)
+    await openSubscription('gt-channels', [
+      allChannelMetaFilter(),
+    ]);
+
+    // 4. NIP-17 DMs (gift-wrapped, addressed to our pubkey)
+    if (opts?.userPubkey) {
+      await openSubscription('gt-dms', [
+        dmGiftWrapFilter({ recipientPubkey: opts.userPubkey, since }),
+      ]);
+    }
+  }
+
+  async function openChannel(channelId: string) {
+    // Close any existing channel subscription
+    closeChannel();
+
+    activeChannelId.set(channelId);
+
+    const since = Math.floor(Date.now() / 1000) - 86400 * 7; // last 7 days
+    const subId = await openSubscription(`gt-chan-${channelId.slice(0, 8)}`, [
+      channelMessageFilter({ channelId, since, limit: MAX_CHANNEL_MESSAGES }),
+    ]);
+    if (subId) {
+      channelSubId = subId;
+    }
+  }
+
+  function closeChannel() {
+    if (channelSubId) {
+      void closeSubscription(channelSubId);
+      channelSubId = null;
+    }
+    activeChannelId.set(null);
+  }
+
+  async function sendDM(recipientPubkey: string, content: string) {
+    const event = {
+      kind: KIND_DM,
+      content,
+      tags: [['p', recipientPubkey]],
+      created_at: Math.floor(Date.now() / 1000),
+    };
+
+    const result = await bridge.request('nostr:publish', event);
+    if (result && typeof result === 'object' && 'error' in result) {
+      throw new Error((result as { error: string }).error);
+    }
+  }
+
+  async function sendChannelMessage(channelId: string, content: string) {
+    const event = {
+      kind: KIND_CHANNEL_MESSAGE,
+      content,
+      tags: [['e', channelId, '', 'root']],
+      created_at: Math.floor(Date.now() / 1000),
+    };
+
+    const result = await bridge.request('nostr:publish', event);
+    if (result && typeof result === 'object' && 'error' in result) {
+      throw new Error((result as { error: string }).error);
+    }
+  }
+
+  function disconnect() {
+    // Close channel sub if active
+    closeChannel();
+
+    // Unsubscribe from bridge events
+    for (const unsub of unsubHandlers) {
+      unsub();
+    }
+    unsubHandlers.length = 0;
+
+    // Close relay subscriptions
+    for (const subId of activeSubIds) {
+      void bridge.request('nostr:unsubscribe', { subId }).catch(() => {
+        // Best-effort cleanup; ignore errors on teardown
+      });
+    }
+    activeSubIds.length = 0;
   }
 
   return {
@@ -235,15 +528,19 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
     protocol,
     workItems,
     queues,
-    loading,
+    groups,
+    channels,
+    directMessages,
+    channelMeta,
+    channelMessages,
+    activeChannelId,
+    ready,
     error,
-    refresh,
-    refreshLogs,
-    refreshAgents,
-    refreshConvoys,
-    refreshIssues,
-    refreshProtocol,
-    refreshWorkItems,
-    refreshQueues,
+    connect,
+    disconnect,
+    openChannel,
+    closeChannel,
+    sendDM,
+    sendChannelMessage,
   };
 }

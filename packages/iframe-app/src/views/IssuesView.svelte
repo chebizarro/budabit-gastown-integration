@@ -4,10 +4,9 @@
 
   type Props = {
     issues: ParsedGTEvent<BeadsIssueStateContent>[];
-    onRefresh: () => void;
   };
 
-  const { issues, onRefresh }: Props = $props();
+  const { issues }: Props = $props();
 
   let filterStatus = $state<string>('all');
 
@@ -37,7 +36,7 @@
         <option value="blocked">Blocked ({counts.blocked})</option>
         <option value="closed">Closed ({counts.closed})</option>
       </select>
-      <button class="btn-sm" onclick={onRefresh}>↻</button>
+      <span class="live-badge">● live</span>
     </div>
   </div>
 
@@ -125,15 +124,11 @@
     font-size: 0.85rem;
     background: white;
   }
-  .btn-sm {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.85rem;
-    background: #e9ecef;
-    border: 1px solid #ced4da;
-    border-radius: 4px;
-    cursor: pointer;
+  .live-badge {
+    font-size: 0.75rem;
+    color: #28a745;
+    font-weight: 600;
   }
-  .btn-sm:hover { background: #dee2e6; }
   .empty { color: #999; text-align: center; padding: 2rem; }
   .issue-table { font-size: 0.85rem; }
   .table-header, .table-row {

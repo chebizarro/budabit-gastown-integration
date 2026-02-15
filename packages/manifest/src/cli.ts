@@ -54,7 +54,7 @@ program
   .option(
     '--permissions <csv>',
     'Comma-separated permissions (permission tags)',
-    'nostr:publish,ui:toast'
+    'nostr:publish,nostr:query,nostr:subscribe,ui:toast'
   )
   .option('--pubkey <hex>', 'Optional creator pubkey (hex) for widget.json (discovery tooling)')
   .option('--output <dir>', 'Output directory', 'dist/widget')

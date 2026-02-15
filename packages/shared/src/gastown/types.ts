@@ -193,6 +193,53 @@ export interface ChannelDefContent {
   created_at: string;
 }
 
+// --- NIP-17 Direct Message (kind 14) ---
+
+export interface DirectMessage {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  /** Recipient pubkey (from 'p' tag). */
+  recipientPubkey?: string;
+  /** Thread root reference (from 'e' tag with 'root' marker). */
+  rootId?: string;
+  /** Reply-to reference (from 'e' tag with 'reply' marker). */
+  replyToId?: string;
+  /** Subject/topic (from 'subject' tag). */
+  subject?: string;
+  /** Display name of sender (resolved externally). */
+  senderName?: string;
+}
+
+// --- NIP-28 Channel Message (kind 42) ---
+
+export interface ChannelMessage {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  /** Channel ID (from root 'e' tag). */
+  channelId: string;
+  /** Reply-to event ID (from reply 'e' tag). */
+  replyToId?: string;
+  /** Display name of sender (resolved externally). */
+  senderName?: string;
+}
+
+// --- NIP-28 Channel Metadata (kind 40/41) ---
+
+export interface ChannelMetadata {
+  id: string;
+  name: string;
+  about?: string;
+  picture?: string;
+  /** Event ID of the kind 40 creation event. */
+  creationEventId: string;
+  /** Latest metadata from kind 41 if updated. */
+  updatedAt?: number;
+}
+
 // --- Parsed event wrappers (for store use) ---
 
 export interface GTNostrEvent {
