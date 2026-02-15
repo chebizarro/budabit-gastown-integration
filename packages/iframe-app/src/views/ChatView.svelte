@@ -17,6 +17,9 @@
 
   /** Group messages into conversations by the other party's pubkey. */
   const conversations = $derived.by(() => {
+    // If we don't have a userPubkey, we can't properly group conversations
+    if (!userPubkey) return [];
+
     const convMap = new Map<string, { pubkey: string; messages: DirectMessage[]; lastTs: number }>();
 
     for (const msg of messages) {
@@ -24,6 +27,9 @@
       const otherPubkey = msg.pubkey === userPubkey
         ? (msg.recipientPubkey ?? 'unknown')
         : msg.pubkey;
+
+      // Skip messages with unknown recipients
+      if (otherPubkey === 'unknown') continue;
 
       let conv = convMap.get(otherPubkey);
       if (!conv) {
@@ -84,7 +90,12 @@
     <span class="live-badge">● live</span>
   </div>
 
-  <div class="chat-layout">
+  {#if !userPubkey}
+    <div class="info-banner">
+      <p>Direct messages require user authentication. Please ensure the host provides a user pubkey.</p>
+    </div>
+  {:else}
+    <div class="chat-layout">
     <!-- Conversation list sidebar -->
     <div class="conv-sidebar">
       <button class="new-conv-btn" onclick={startNewConversation}>
@@ -167,6 +178,7 @@
       </form>
     </div>
   </div>
+  {/if}
 </section>
 
 <style>
@@ -371,4 +383,14 @@
   }
   .send-btn:disabled { background: #adb5bd; cursor: not-allowed; }
   .send-btn:hover:not(:disabled) { background: #0056b3; }
+
+  .info-banner {
+    padding: 1rem;
+    background: #d1ecf1;
+    border: 1px solid #bee5eb;
+    border-radius: 4px;
+    color: #0c5460;
+    text-align: center;
+  }
+  .info-banner p { margin: 0; font-size: 0.85rem; }
 </style>

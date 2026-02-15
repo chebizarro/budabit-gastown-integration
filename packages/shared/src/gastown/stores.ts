@@ -245,9 +245,10 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
   const ready = new GTStore<boolean>(false);
   const error = new GTStore<string | null>(null);
 
-  const activeSubIds: string[] = [];
+  let activeSubIds: string[] = [];
   const unsubHandlers: (() => void)[] = [];
   let channelSubId: string | null = null;
+  let readyTimeout: ReturnType<typeof setTimeout> | null = null;
 
   function ingestEvent(raw: GTNostrEvent): void {
     // --- NIP-17 DMs (kind 14) ---
@@ -381,8 +382,14 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
         throw new Error((result as { error: string }).error);
       }
 
+      // Validate subscription response structure
+      if (!result || typeof result !== 'object' || !('subId' in result)) {
+        throw new Error('Invalid subscription response: missing subId');
+      }
+
       const subId = (result as { subId: string }).subId ?? subLabel;
-      activeSubIds.push(subId);
+      // Use immutable pattern for array update
+      activeSubIds = [...activeSubIds, subId];
       return subId;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -397,8 +404,8 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
     } catch {
       // Best-effort cleanup
     }
-    const idx = activeSubIds.indexOf(subId);
-    if (idx >= 0) activeSubIds.splice(idx, 1);
+    // Use immutable pattern for array update
+    activeSubIds = activeSubIds.filter(id => id !== subId);
   }
 
   async function connect(opts?: { rig?: string; userPubkey?: string }) {
@@ -413,40 +420,61 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
     });
     unsubHandlers.push(offEvent);
 
-    // Listen for EOSE to know when initial state is loaded
+    // Track successful subscriptions for accurate EOSE counting
+    const successfulSubs: string[] = [];
     let eoseCount = 0;
-    const expectedSubs = opts?.userPubkey ? 4 : 3; // state + stream + channels (+ DMs if pubkey)
+
+    // Listen for EOSE to know when initial state is loaded
     const offEose = bridge.onEvent('nostr:eose', (_payload: unknown) => {
       eoseCount++;
-      if (eoseCount >= expectedSubs) {
+      if (eoseCount >= successfulSubs.length && successfulSubs.length > 0) {
+        if (readyTimeout) clearTimeout(readyTimeout);
         ready.set(true);
       }
     });
     unsubHandlers.push(offEose);
 
+    // Set a fallback timeout to mark ready even if EOSE doesn't arrive
+    readyTimeout = setTimeout(() => {
+      if (!ready.get()) {
+        ready.set(true);
+      }
+    }, 10000); // 10 second timeout
+
     // 1. All replaceable GT state (lifecycle, convoys, issues, defs)
-    await openSubscription('gt-state', [
+    const stateSub = await openSubscription('gt-state', [
       allStateFilter({ rig: opts?.rig }),
     ]);
+    if (stateSub) successfulSubs.push(stateSub);
 
     // 2. Append-only GT events (logs, protocol, work items) — limit initial backfill
     const since = Math.floor(Date.now() / 1000) - 86400; // last 24h
-    await openSubscription('gt-stream', [
+    const streamSub = await openSubscription('gt-stream', [
       activityLogFilter({ rig: opts?.rig, visibility: ['feed', 'both'], since }),
       protocolFilter({ since }),
       workItemFilter({}),
     ]);
+    if (streamSub) successfulSubs.push(streamSub);
 
     // 3. NIP-28 channel metadata (kind 40 + 41)
-    await openSubscription('gt-channels', [
+    const channelsSub = await openSubscription('gt-channels', [
       allChannelMetaFilter(),
     ]);
+    if (channelsSub) successfulSubs.push(channelsSub);
 
     // 4. NIP-17 DMs (gift-wrapped, addressed to our pubkey)
     if (opts?.userPubkey) {
-      await openSubscription('gt-dms', [
+      const dmsSub = await openSubscription('gt-dms', [
         dmGiftWrapFilter({ recipientPubkey: opts.userPubkey, since }),
       ]);
+      if (dmsSub) successfulSubs.push(dmsSub);
+    }
+
+    // If no subscriptions succeeded, set error and mark ready anyway
+    if (successfulSubs.length === 0) {
+      error.set('All subscriptions failed');
+      ready.set(true);
+      if (readyTimeout) clearTimeout(readyTimeout);
     }
   }
 
@@ -502,6 +530,12 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
   }
 
   function disconnect() {
+    // Clear ready timeout if active
+    if (readyTimeout) {
+      clearTimeout(readyTimeout);
+      readyTimeout = null;
+    }
+
     // Close channel sub if active
     closeChannel();
 
@@ -517,7 +551,7 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
         // Best-effort cleanup; ignore errors on teardown
       });
     }
-    activeSubIds.length = 0;
+    activeSubIds = [];
   }
 
   return {

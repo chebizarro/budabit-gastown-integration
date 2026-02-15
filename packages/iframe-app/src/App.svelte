@@ -45,6 +45,7 @@
 
   // State
   let stores = $state<GTStoreManager | null>(null);
+  let storeUnsubscribers = $state<(() => void)[]>([]);
   let activeTab = $state<Tab>('agents');
   let status = $state<'connecting' | 'connected' | 'error'>('connecting');
   let statusMessage = $state('Connecting...');
@@ -67,30 +68,41 @@
   let storeError = $state<string | null>(null);
 
   function connectStores(b: WidgetBridge, relays: string[], pubkey?: string) {
+    // Clean up existing stores to prevent race condition
+    if (stores) {
+      stores.disconnect();
+    }
+    
+    // Unsubscribe from previous store subscriptions to prevent memory leak
+    for (const unsub of storeUnsubscribers) {
+      unsub();
+    }
+    storeUnsubscribers = [];
+
     const s = createGTStores(b, relays);
     stores = s;
 
-    // Subscribe to all reactive stores
-    s.logs.subscribe(v => { logs = v; });
-    s.agents.subscribe(v => { agents = v; });
-    s.convoys.subscribe(v => { convoys = v; });
-    s.issues.subscribe(v => { issues = v; });
-    s.protocol.subscribe(v => { protocol = v; });
-    s.workItems.subscribe(v => { workItems = v; });
-    s.queues.subscribe(v => { queues = v; });
-    s.groups.subscribe(v => { groupsList = v; });
-    s.directMessages.subscribe(v => { directMessages = v; });
-    s.channelMeta.subscribe(v => { channelsMeta = v; });
-    s.channelMessages.subscribe(v => { channelMessages = v; });
-    s.activeChannelId.subscribe(v => { activeChannelId = v; });
-    s.ready.subscribe(v => {
+    // Subscribe to all reactive stores and store unsubscribe functions
+    storeUnsubscribers.push(s.logs.subscribe(v => { logs = v; }));
+    storeUnsubscribers.push(s.agents.subscribe(v => { agents = v; }));
+    storeUnsubscribers.push(s.convoys.subscribe(v => { convoys = v; }));
+    storeUnsubscribers.push(s.issues.subscribe(v => { issues = v; }));
+    storeUnsubscribers.push(s.protocol.subscribe(v => { protocol = v; }));
+    storeUnsubscribers.push(s.workItems.subscribe(v => { workItems = v; }));
+    storeUnsubscribers.push(s.queues.subscribe(v => { queues = v; }));
+    storeUnsubscribers.push(s.groups.subscribe(v => { groupsList = v; }));
+    storeUnsubscribers.push(s.directMessages.subscribe(v => { directMessages = v; }));
+    storeUnsubscribers.push(s.channelMeta.subscribe(v => { channelsMeta = v; }));
+    storeUnsubscribers.push(s.channelMessages.subscribe(v => { channelMessages = v; }));
+    storeUnsubscribers.push(s.activeChannelId.subscribe(v => { activeChannelId = v; }));
+    storeUnsubscribers.push(s.ready.subscribe(v => {
       isReady = v;
       if (v) {
         status = 'connected';
         statusMessage = 'Connected — live';
       }
-    });
-    s.error.subscribe(v => { storeError = v; });
+    }));
+    storeUnsubscribers.push(s.error.subscribe(v => { storeError = v; }));
 
     // Open relay subscriptions (events stream in via nostr:event push)
     void s.connect({ userPubkey: pubkey });
@@ -122,6 +134,13 @@
 
     return () => {
       offContext();
+      
+      // Clean up store subscriptions
+      for (const unsub of storeUnsubscribers) {
+        unsub();
+      }
+      storeUnsubscribers = [];
+      
       stores?.disconnect();
       b.destroy();
     };
