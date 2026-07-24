@@ -6,7 +6,7 @@
  * messages as they arrive from relay subscriptions.
  */
 
-import type { WidgetBridge } from '../bridge.js';
+import type { WidgetBridge } from 'budabit-sdk';
 import type { NostrFilter } from './filters.js';
 import type { GTNostrEvent, ParsedGTEvent } from './types.js';
 import type {

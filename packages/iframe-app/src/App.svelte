@@ -1,8 +1,7 @@
 <script lang="ts">
+  import { createWidgetBridge, type WidgetBridge } from 'budabit-sdk';
   import {
-    createWidgetBridge,
     createGTStores,
-    type WidgetBridge,
     type GTStoreManager,
     type ParsedGTEvent,
     type LogStatusContent,

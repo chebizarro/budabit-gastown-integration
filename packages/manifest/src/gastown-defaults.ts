@@ -2,8 +2,8 @@
  * Default manifest values for the Gas Town Flotilla extension.
  */
 
-import type { SmartWidgetEventOptions } from './generator.js';
-import type { WidgetPermission } from '@flotilla/ext-shared';
+import type { SmartWidgetEventOptions } from 'budabit-sdk/manifest';
+import type { WidgetPermission } from 'budabit-sdk';
 import {
   KIND_LOG_STATUS,
   KIND_LIFECYCLE,

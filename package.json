@@ -21,13 +21,13 @@
     "format:check": "prettier --check .",
     "clean": "pnpm -r clean && rm -rf node_modules",
     "verify": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm e2e",
-    "manifest:generate": "pnpm --filter @flotilla/ext-manifest generate --title 'Gas Town Dashboard' --type tool --app-url \"${GASTOWN_APP_URL:-http://localhost:5173}\" --icon \"${GASTOWN_ICON:-Building2}\" --image \"${GASTOWN_IMAGE:-https://placehold.co/600x400?text=Gas+Town+Dashboard}\" --button-title 'Open Dashboard' --identifier 'gastown-dashboard' --permissions 'nostr:publish,nostr:query,nostr:subscribe,nostr:unsubscribe,storage:get,storage:set,storage:remove,storage:keys,ui:toast,ui:resize' --nostr-kinds '14,40,41,42,1059,30315,30316,30318,30319,30320,30321,30322,30323,30325,38383,38384,38385,38386' --slot-type repo-tab --slot-label 'Gas Town' --slot-path gastown",
-    "manifest:publish": "pnpm --filter @flotilla/ext-manifest publish-widget",
+    "manifest:generate": "pnpm exec budabit-generate --title 'Gas Town Dashboard' --type tool --app-url \"${GASTOWN_APP_URL:-http://localhost:5173}\" --icon \"${GASTOWN_ICON:-Building2}\" --image \"${GASTOWN_IMAGE:-https://placehold.co/600x400?text=Gas+Town+Dashboard}\" --button-title 'Open Dashboard' --identifier 'gastown-dashboard' --permissions 'nostr:publish,nostr:query,nostr:subscribe,nostr:unsubscribe,storage:get,storage:set,storage:remove,storage:keys,ui:toast,ui:resize' --nostr-kinds '14,40,41,42,1059,30315,30316,30318,30319,30320,30321,30322,30323,30325,38383,38384,38385,38386' --slot-type repo-tab --slot-label 'Gas Town' --slot-path gastown",
+    "manifest:publish": "pnpm exec budabit-publish",
     "widget:build": "pnpm build && pnpm manifest:generate",
     "widget:publish": "pnpm widget:build && pnpm manifest:publish",
-    "widget:publish:dry-run": "pnpm widget:build && pnpm --filter @flotilla/ext-manifest publish-widget --dry-run",
-    "widget:publish:blossom": "pnpm widget:build && pnpm --filter @flotilla/ext-manifest publish-widget --upload-first --blossom https://blossom.primal.net --artifact ../iframe-app/dist/index.html",
-    "widget:publish:github": "pnpm widget:build && pnpm --filter @flotilla/ext-manifest publish-widget --upload-first --github-repo ${GITHUB_REPO} --github-tag ${GITHUB_TAG} --artifact ../iframe-app/dist/index.html"
+    "widget:publish:dry-run": "pnpm widget:build && pnpm exec budabit-publish --dry-run",
+    "widget:publish:blossom": "pnpm widget:build && pnpm exec budabit-publish --upload-first --blossom https://blossom.primal.net --artifact ../iframe-app/dist/index.html",
+    "widget:publish:github": "pnpm widget:build && pnpm exec budabit-publish --upload-first --github-repo ${GITHUB_REPO} --github-tag ${GITHUB_TAG} --artifact ../iframe-app/dist/index.html"
   },
   "keywords": [
     "flotilla",
@@ -45,6 +45,7 @@
     "@types/node": "^22.10.2",
     "@vitest/coverage-v8": "^2.1.8",
     "@vitest/ui": "^2.1.8",
+    "budabit-sdk": "^0.2.0",
     "eslint": "^9.17.0",
     "jsdom": "^25.0.1",
     "prettier": "^3.4.2",
@@ -56,5 +57,10 @@
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
   },
-  "packageManager": "pnpm@8.15.0"
+  "packageManager": "pnpm@8.15.0",
+  "pnpm": {
+    "overrides": {
+      "budabit-sdk": "file:/Users/bizarro/Documents/Projects/budabit/flotilla-extensions/budabit-extension-template/packages/sdk"
+    }
+  }
 }

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { createEvent } from 'budabit-sdk';
 import {
-  createEvent,
-  createTextNote,
   createLogStatusEvent,
   createLifecycleEvent,
   createProtocolEvent,
@@ -13,26 +12,7 @@ import {
   KIND_LIFECYCLE,
   KIND_GT_PROTOCOL_EVENT,
   KIND_GT_WORK_ITEM,
-} from './gastown/kinds.js';
-
-describe('createEvent', () => {
-  it('creates an unsigned event with correct fields', () => {
-    const e = createEvent(1, 'hello', [['t', 'test']]);
-    expect(e.kind).toBe(1);
-    expect(e.content).toBe('hello');
-    expect(e.tags).toEqual([['t', 'test']]);
-    expect(typeof e.created_at).toBe('number');
-    expect(e.created_at).toBeGreaterThan(0);
-  });
-});
-
-describe('createTextNote', () => {
-  it('creates a kind 1 event', () => {
-    const e = createTextNote('hello world');
-    expect(e.kind).toBe(1);
-    expect(e.content).toBe('hello world');
-  });
-});
+} from './kinds.js';
 
 describe('createLogStatusEvent', () => {
   it('creates a kind 30315 event with correct tags', () => {

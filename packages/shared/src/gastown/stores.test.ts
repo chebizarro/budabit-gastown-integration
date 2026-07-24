@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GTStore, createGTStores, type GTStoreManager } from './stores.js';
-import type { WidgetBridge } from '../bridge.js';
+import type { WidgetBridge } from 'budabit-sdk';
 
 // --- GTStore unit tests ---
 

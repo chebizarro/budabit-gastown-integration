@@ -1,4 +1,4 @@
-import type { UnsignedEvent } from './types.js';
+import { createEvent, validateEvent as validateSdkEvent, type UnsignedEvent } from 'budabit-sdk';
 import {
   KIND_LOG_STATUS,
   KIND_LIFECYCLE,
@@ -6,37 +6,14 @@ import {
   KIND_GT_WORK_ITEM,
   GT_PROTOCOL_VERSION,
   GT_STATE_KINDS,
-} from './gastown/kinds.js';
-import type { AgentRole, LogEventType, ProtocolMsgType } from './gastown/types.js';
+} from './kinds.js';
+import type { AgentRole, LogEventType, ProtocolMsgType } from './types.js';
 
 /**
  * Signaling helpers for creating Gas Town Nostr events.
  *
  * All GT events include the `["gt", "1"]` protocol version tag.
  */
-
-/**
- * Create a basic unsigned event template.
- */
-export function createEvent(
-  kind: number,
-  content: string,
-  tags: string[][] = []
-): UnsignedEvent {
-  return {
-    kind,
-    content,
-    tags,
-    created_at: Math.floor(Date.now() / 1000),
-  };
-}
-
-/**
- * Create a text note event (kind 1).
- */
-export function createTextNote(content: string, tags: string[][] = []): UnsignedEvent {
-  return createEvent(1, content, tags);
-}
 
 /**
  * Build the base GT tags included on every Gas Town event.
@@ -211,29 +188,5 @@ export function createWorkItemEvent(
  * Validate a Gas Town event before publishing.
  */
 export function validateEvent(event: UnsignedEvent, allowedKinds?: number[]): boolean {
-  const kinds = allowedKinds ?? [...GT_STATE_KINDS, 1];
-
-  if (!kinds.includes(event.kind)) {
-    console.error(`Event kind ${String(event.kind)} not allowed`);
-    return false;
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  const diff = Math.abs(now - event.created_at);
-  if (diff > 3600) {
-    console.error('Event timestamp out of range');
-    return false;
-  }
-
-  if (event.content.length > 100000) {
-    console.error('Event content too large');
-    return false;
-  }
-
-  if (event.tags.length > 100) {
-    console.error('Too many tags');
-    return false;
-  }
-
-  return true;
+  return validateSdkEvent(event, allowedKinds ?? [...GT_STATE_KINDS, 1]);
 }
