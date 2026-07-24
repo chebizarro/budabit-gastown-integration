@@ -62,18 +62,18 @@
   .view-header h2 { margin: 0; font-size: 1.2rem; }
   .live-badge {
     font-size: 0.75rem;
-    color: #28a745;
+    color: var(--ext-success);
     font-weight: 600;
   }
-  .empty { color: #999; text-align: center; padding: 2rem; }
+  .empty { color: var(--ext-text-faint); text-align: center; padding: 2rem; }
   .event-list { display: flex; flex-direction: column; gap: 0.5rem; }
   .event-row {
     display: flex;
     gap: 0.75rem;
     padding: 0.75rem;
-    background: #f8f9fa;
+    background: var(--ext-surface-2);
     border-radius: 6px;
-    border: 1px solid #eee;
+    border: 1px solid var(--ext-border-subtle);
   }
   .icon { font-size: 1.2rem; flex-shrink: 0; }
   .event-body { flex: 1; min-width: 0; }
@@ -85,14 +85,14 @@
     font-size: 0.75rem;
     font-weight: 600;
   }
-  .tag.type { background: #d1ecf1; color: #0c5460; }
-  .tag.rig { background: #d4edda; color: #155724; }
-  .tag.actor { background: #e2e3e5; color: #383d41; }
-  .time { font-size: 0.75rem; color: #999; margin-left: auto; }
+  .tag.type { background: var(--ext-info-bg); color: var(--ext-info-text); }
+  .tag.rig { background: var(--ext-success-bg); color: var(--ext-success-text); }
+  .tag.actor { background: var(--ext-neutral-bg); color: var(--ext-neutral-text); }
+  .time { font-size: 0.75rem; color: var(--ext-text-faint); margin-left: auto; }
   .payload {
     margin-top: 0.3rem;
     font-size: 0.8rem;
-    color: #555;
+    color: var(--ext-text-secondary);
     font-family: monospace;
     word-break: break-all;
   }
@@ -100,6 +100,6 @@
     display: inline-block;
     margin-top: 0.25rem;
     font-size: 0.75rem;
-    color: #666;
+    color: var(--ext-text-muted);
   }
 </style>

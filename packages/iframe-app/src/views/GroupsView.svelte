@@ -71,13 +71,13 @@
   }
   .view-header h2 { margin: 0; font-size: 1.2rem; }
   .header-right { display: flex; gap: 0.75rem; align-items: center; }
-  .count { font-size: 0.8rem; color: #555; }
+  .count { font-size: 0.8rem; color: var(--ext-text-secondary); }
   .live-badge {
     font-size: 0.75rem;
-    color: #28a745;
+    color: var(--ext-success);
     font-weight: 600;
   }
-  .empty { color: #999; text-align: center; padding: 2rem; }
+  .empty { color: var(--ext-text-faint); text-align: center; padding: 2rem; }
 
   .group-grid {
     display: grid;
@@ -86,13 +86,13 @@
   }
 
   .group-card {
-    background: #f8f9fa;
-    border: 1px solid #eee;
+    background: var(--ext-surface-2);
+    border: 1px solid var(--ext-border-subtle);
     border-radius: 8px;
     padding: 0.75rem;
     transition: border-color 0.2s;
   }
-  .group-card:hover { border-color: #adb5bd; }
+  .group-card:hover { border-color: var(--ext-text-faint); }
 
   .card-header {
     display: flex;
@@ -106,8 +106,8 @@
 
   .member-count {
     font-size: 0.75rem;
-    color: #666;
-    background: #e9ecef;
+    color: var(--ext-text-muted);
+    background: var(--ext-surface-3);
     padding: 0.15rem 0.5rem;
     border-radius: 10px;
   }
@@ -122,8 +122,8 @@
   .member-tag {
     display: inline-block;
     padding: 0.15rem 0.4rem;
-    background: #d1ecf1;
-    color: #0c5460;
+    background: var(--ext-info-bg);
+    color: var(--ext-info-text);
     border-radius: 3px;
     font-size: 0.7rem;
     font-family: monospace;
@@ -131,7 +131,7 @@
 
   .more-members {
     font-size: 0.7rem;
-    color: #888;
+    color: var(--ext-text-faint);
     padding: 0.15rem 0.4rem;
   }
 
@@ -139,12 +139,12 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--ext-border-subtle);
     padding-top: 0.4rem;
   }
 
   .field {
     font-size: 0.75rem;
-    color: #888;
+    color: var(--ext-text-faint);
   }
 </style>

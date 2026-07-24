@@ -122,28 +122,28 @@
   }
   .view-header h2 { margin: 0; font-size: 1.2rem; }
   .header-stats { display: flex; gap: 0.75rem; align-items: center; }
-  .stat { font-size: 0.8rem; color: #555; display: flex; align-items: center; gap: 0.25rem; }
+  .stat { font-size: 0.8rem; color: var(--ext-text-secondary); display: flex; align-items: center; gap: 0.25rem; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .live-badge {
     font-size: 0.75rem;
-    color: #28a745;
+    color: var(--ext-success);
     font-weight: 600;
   }
-  .empty { color: #999; text-align: center; padding: 2rem; }
+  .empty { color: var(--ext-text-faint); text-align: center; padding: 2rem; }
   .agent-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 0.75rem;
   }
   .agent-card {
-    background: #f8f9fa;
-    border: 1px solid #eee;
+    background: var(--ext-surface-2);
+    border: 1px solid var(--ext-border-subtle);
     border-radius: 8px;
     padding: 0.75rem;
     transition: border-color 0.2s;
   }
-  .agent-card:hover { border-color: #adb5bd; }
-  .agent-card.stale { border-color: #ffc107; background: #fff8e1; }
+  .agent-card:hover { border-color: var(--ext-text-faint); }
+  .agent-card.stale { border-color: var(--ext-warning); background: var(--ext-warning-bg); }
   .card-header {
     display: flex;
     align-items: center;
@@ -156,14 +156,14 @@
     padding: 0.15rem 0.5rem;
     border-radius: 10px;
     font-size: 0.7rem;
-    color: white;
+    color: var(--ext-accent-text);
     font-weight: 600;
     text-transform: uppercase;
   }
   .card-body { display: flex; flex-direction: column; gap: 0.25rem; }
   .field { display: flex; gap: 0.4rem; font-size: 0.8rem; }
-  .label { color: #888; min-width: 80px; }
-  .issue-link { color: #007bff; font-weight: 500; }
+  .label { color: var(--ext-text-faint); min-width: 80px; }
+  .issue-link { color: var(--ext-accent); font-weight: 500; }
   .mono { font-family: monospace; font-size: 0.75rem; }
-  .stale-text { color: #e65100; }
+  .stale-text { color: var(--ext-warning-text); }
 </style>

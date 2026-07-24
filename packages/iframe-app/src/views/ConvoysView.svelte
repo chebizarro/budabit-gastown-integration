@@ -90,14 +90,14 @@
   .view-header h2 { margin: 0; font-size: 1.2rem; }
   .live-badge {
     font-size: 0.75rem;
-    color: #28a745;
+    color: var(--ext-success);
     font-weight: 600;
   }
-  .empty { color: #999; text-align: center; padding: 2rem; }
+  .empty { color: var(--ext-text-faint); text-align: center; padding: 2rem; }
   .convoy-list { display: flex; flex-direction: column; gap: 0.75rem; }
   .convoy-card {
-    background: #f8f9fa;
-    border: 1px solid #eee;
+    background: var(--ext-surface-2);
+    border: 1px solid var(--ext-border-subtle);
     border-radius: 8px;
     padding: 1rem;
   }
@@ -112,26 +112,26 @@
     padding: 0.15rem 0.5rem;
     border-radius: 10px;
     font-size: 0.7rem;
-    color: white;
+    color: var(--ext-accent-text);
     font-weight: 600;
     text-transform: uppercase;
   }
   .progress-bar {
     height: 6px;
-    background: #e9ecef;
+    background: var(--ext-surface-3);
     border-radius: 3px;
     overflow: hidden;
     display: flex;
     margin-bottom: 0.3rem;
   }
-  .bar-fill.closed { background: #28a745; }
-  .bar-fill.blocked { background: #dc3545; }
+  .bar-fill.closed { background: var(--ext-success); }
+  .bar-fill.blocked { background: var(--ext-danger); }
   .summary-stats {
     font-size: 0.75rem;
-    color: #666;
+    color: var(--ext-text-muted);
     margin-bottom: 0.5rem;
   }
-  .blocked-text { color: #dc3545; }
+  .blocked-text { color: var(--ext-danger); }
   .issues-list {
     display: flex;
     flex-direction: column;
@@ -145,9 +145,9 @@
     font-size: 0.8rem;
   }
   .issue-status { font-size: 0.6rem; }
-  .issue-id { font-weight: 600; color: #007bff; min-width: 60px; }
-  .issue-title { flex: 1; color: #333; }
-  .issue-assignee { color: #888; font-size: 0.75rem; }
-  .workers { font-size: 0.75rem; color: #555; margin-bottom: 0.25rem; }
-  .updated { font-size: 0.7rem; color: #999; }
+  .issue-id { font-weight: 600; color: var(--ext-accent); min-width: 60px; }
+  .issue-title { flex: 1; color: var(--ext-text); }
+  .issue-assignee { color: var(--ext-text-faint); font-size: 0.75rem; }
+  .workers { font-size: 0.75rem; color: var(--ext-text-secondary); margin-bottom: 0.25rem; }
+  .updated { font-size: 0.7rem; color: var(--ext-text-faint); }
 </style>

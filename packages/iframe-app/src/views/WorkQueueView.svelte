@@ -123,17 +123,17 @@
   .controls { display: flex; gap: 0.5rem; align-items: center; }
   select {
     padding: 0.25rem 0.5rem;
-    border: 1px solid #ced4da;
+    border: 1px solid var(--ext-border);
     border-radius: 4px;
     font-size: 0.85rem;
-    background: white;
+    background: var(--ext-surface);
   }
   .live-badge {
     font-size: 0.75rem;
-    color: #28a745;
+    color: var(--ext-success);
     font-weight: 600;
   }
-  .empty { color: #999; text-align: center; padding: 2rem; }
+  .empty { color: var(--ext-text-faint); text-align: center; padding: 2rem; }
 
   .queue-defs {
     display: grid;
@@ -142,8 +142,8 @@
     margin-bottom: 1rem;
   }
   .queue-card {
-    background: #f8f9fa;
-    border: 1px solid #eee;
+    background: var(--ext-surface-2);
+    border: 1px solid var(--ext-border-subtle);
     border-radius: 6px;
     padding: 0.75rem;
   }
@@ -158,7 +158,7 @@
     padding: 0.1rem 0.4rem;
     border-radius: 8px;
     font-size: 0.65rem;
-    color: white;
+    color: var(--ext-accent-text);
     font-weight: 600;
     text-transform: uppercase;
   }
@@ -167,19 +167,19 @@
     flex-wrap: wrap;
     gap: 0.5rem;
     font-size: 0.8rem;
-    color: #555;
+    color: var(--ext-text-secondary);
     margin-bottom: 0.3rem;
   }
-  .failed { color: #dc3545; }
-  .queue-meta { font-size: 0.7rem; color: #999; }
+  .failed { color: var(--ext-danger); }
+  .queue-meta { font-size: 0.7rem; color: var(--ext-text-faint); }
 
   .items-list { display: flex; flex-direction: column; gap: 0.4rem; }
   .item-row {
     display: flex;
     gap: 0.75rem;
     padding: 0.6rem 0.75rem;
-    background: #f8f9fa;
-    border: 1px solid #eee;
+    background: var(--ext-surface-2);
+    border: 1px solid var(--ext-border-subtle);
     border-radius: 6px;
     align-items: flex-start;
   }
@@ -190,12 +190,12 @@
   .item-queue {
     font-size: 0.7rem;
     padding: 0.1rem 0.3rem;
-    background: #e2e3e5;
+    background: var(--ext-neutral-bg);
     border-radius: 3px;
-    color: #383d41;
+    color: var(--ext-neutral-text);
     flex-shrink: 0;
   }
-  .item-claimed { font-size: 0.75rem; color: #e65100; margin-top: 0.2rem; }
-  .item-issue { font-size: 0.75rem; color: #007bff; }
-  .item-time { font-size: 0.75rem; color: #999; flex-shrink: 0; }
+  .item-claimed { font-size: 0.75rem; color: var(--ext-warning-text); margin-top: 0.2rem; }
+  .item-issue { font-size: 0.75rem; color: var(--ext-accent); }
+  .item-time { font-size: 0.75rem; color: var(--ext-text-faint); flex-shrink: 0; }
 </style>

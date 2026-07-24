@@ -69,18 +69,18 @@
   .view-header h2 { margin: 0; font-size: 1.2rem; }
   .live-badge {
     font-size: 0.75rem;
-    color: #28a745;
+    color: var(--ext-success);
     font-weight: 600;
   }
-  .empty { color: #999; text-align: center; padding: 2rem; }
+  .empty { color: var(--ext-text-faint); text-align: center; padding: 2rem; }
   .event-list { display: flex; flex-direction: column; gap: 0.5rem; }
   .event-row {
     display: flex;
     gap: 0.75rem;
     padding: 0.75rem;
-    background: #f8f9fa;
+    background: var(--ext-surface-2);
     border-radius: 6px;
-    border: 1px solid #eee;
+    border: 1px solid var(--ext-border-subtle);
   }
   .icon { font-size: 1.2rem; flex-shrink: 0; }
   .event-body { flex: 1; min-width: 0; }
@@ -95,17 +95,17 @@
     font-weight: 700;
     font-size: 0.8rem;
     padding: 0.1rem 0.4rem;
-    background: #d1ecf1;
-    color: #0c5460;
+    background: var(--ext-info-bg);
+    color: var(--ext-info-text);
     border-radius: 3px;
   }
   .route {
     font-size: 0.75rem;
-    color: #555;
+    color: var(--ext-text-secondary);
     font-family: monospace;
   }
-  .route-arrow { font-size: 0.75rem; color: #999; }
-  .time { font-size: 0.75rem; color: #999; margin-left: auto; }
+  .route-arrow { font-size: 0.75rem; color: var(--ext-text-faint); }
+  .time { font-size: 0.75rem; color: var(--ext-text-faint); margin-left: auto; }
   .body-fields {
     display: flex;
     flex-wrap: wrap;
@@ -113,13 +113,13 @@
     margin-bottom: 0.25rem;
   }
   .field { font-size: 0.75rem; }
-  .field-key { color: #888; }
-  .field-val { color: #333; font-family: monospace; }
+  .field-key { color: var(--ext-text-faint); }
+  .field-val { color: var(--ext-text); font-family: monospace; }
   .correlation {
     display: inline-block;
     margin-top: 0.15rem;
     margin-right: 0.5rem;
     font-size: 0.75rem;
-    color: #666;
+    color: var(--ext-text-muted);
   }
 </style>

@@ -119,17 +119,17 @@
   .controls { display: flex; gap: 0.5rem; align-items: center; }
   select {
     padding: 0.25rem 0.5rem;
-    border: 1px solid #ced4da;
+    border: 1px solid var(--ext-border);
     border-radius: 4px;
     font-size: 0.85rem;
-    background: white;
+    background: var(--ext-surface);
   }
   .live-badge {
     font-size: 0.75rem;
-    color: #28a745;
+    color: var(--ext-success);
     font-weight: 600;
   }
-  .empty { color: #999; text-align: center; padding: 2rem; }
+  .empty { color: var(--ext-text-faint); text-align: center; padding: 2rem; }
   .issue-table { font-size: 0.85rem; }
   .table-header, .table-row {
     display: grid;
@@ -140,16 +140,16 @@
   }
   .table-header {
     font-weight: 600;
-    color: #666;
-    border-bottom: 2px solid #dee2e6;
+    color: var(--ext-text-muted);
+    border-bottom: 2px solid var(--ext-border);
     font-size: 0.75rem;
     text-transform: uppercase;
   }
   .table-row {
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid var(--ext-surface-2);
   }
-  .table-row:hover { background: #f8f9fa; }
-  .mono { font-family: monospace; font-size: 0.8rem; color: #007bff; }
+  .table-row:hover { background: var(--ext-surface-2); }
+  .mono { font-family: monospace; font-size: 0.8rem; color: var(--ext-accent); }
   .col-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .col-status, .col-priority {
     display: flex;
@@ -165,28 +165,28 @@
   }
   .col-assignee {
     font-size: 0.8rem;
-    color: #555;
+    color: var(--ext-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .col-updated { font-size: 0.75rem; color: #999; }
+  .col-updated { font-size: 0.75rem; color: var(--ext-text-faint); }
   .labels { margin-left: 0.3rem; }
   .label-tag {
     display: inline-block;
     padding: 0 0.3rem;
-    background: #e2e3e5;
+    background: var(--ext-neutral-bg);
     border-radius: 3px;
     font-size: 0.65rem;
-    color: #383d41;
+    color: var(--ext-neutral-text);
     margin-right: 0.15rem;
   }
   .dep-row {
     padding: 0.2rem 0.75rem 0.2rem 90px;
     font-size: 0.75rem;
-    color: #666;
+    color: var(--ext-text-muted);
   }
-  .dep-row.blocked { color: #dc3545; }
-  .dep-row.branch { color: #28a745; }
+  .dep-row.blocked { color: var(--ext-danger); }
+  .dep-row.branch { color: var(--ext-success); }
   .dep-row.blobs { color: #6f42c1; }
 </style>

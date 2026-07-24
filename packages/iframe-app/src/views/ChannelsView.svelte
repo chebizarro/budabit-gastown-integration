@@ -151,7 +151,7 @@
   .view-header h2 { margin: 0; font-size: 1.2rem; }
   .live-badge {
     font-size: 0.75rem;
-    color: #28a745;
+    color: var(--ext-success);
     font-weight: 600;
   }
 
@@ -159,7 +159,7 @@
     display: grid;
     grid-template-columns: 220px 1fr;
     gap: 0;
-    border: 1px solid #dee2e6;
+    border: 1px solid var(--ext-border);
     border-radius: 8px;
     overflow: hidden;
     min-height: 400px;
@@ -175,7 +175,7 @@
 
   .empty-sidebar {
     padding: 1rem;
-    color: #72767d;
+    color: var(--ext-text-muted);
     font-size: 0.8rem;
     text-align: center;
   }
@@ -190,10 +190,10 @@
     cursor: pointer;
     text-align: left;
     transition: background 0.15s;
-    color: #dcddde;
+    color: var(--ext-border);
   }
   .chan-item:hover { background: #34373c; }
-  .chan-item.active { background: #393c43; color: #fff; }
+  .chan-item.active { background: #393c43; color: var(--ext-surface); }
 
   .chan-name {
     font-size: 0.85rem;
@@ -202,7 +202,7 @@
 
   .chan-about {
     font-size: 0.7rem;
-    color: #72767d;
+    color: var(--ext-text-muted);
   }
 
   /* Content area */
@@ -210,7 +210,7 @@
     display: flex;
     flex-direction: column;
     background: #36393f;
-    color: #dcddde;
+    color: var(--ext-border);
   }
 
   .no-channel {
@@ -218,7 +218,7 @@
     align-items: center;
     justify-content: center;
     flex: 1;
-    color: #72767d;
+    color: var(--ext-text-muted);
     font-size: 0.9rem;
   }
 
@@ -234,7 +234,7 @@
   .back-btn {
     background: none;
     border: none;
-    color: #dcddde;
+    color: var(--ext-border);
     cursor: pointer;
     font-size: 1.1rem;
     padding: 0.2rem 0.4rem;
@@ -245,12 +245,12 @@
   .chan-title {
     font-weight: 700;
     font-size: 0.95rem;
-    color: #fff;
+    color: var(--ext-surface);
   }
 
   .chan-desc {
     font-size: 0.75rem;
-    color: #72767d;
+    color: var(--ext-text-muted);
     margin-left: 0.5rem;
     border-left: 1px solid #40444b;
     padding-left: 0.5rem;
@@ -266,7 +266,7 @@
   }
 
   .empty {
-    color: #72767d;
+    color: var(--ext-text-muted);
     text-align: center;
     padding: 2rem;
     font-size: 0.85rem;
@@ -296,20 +296,20 @@
 
   .chan-msg-time {
     font-size: 0.7rem;
-    color: #72767d;
+    color: var(--ext-text-muted);
   }
 
   .chan-msg-content {
     font-size: 0.85rem;
     line-height: 1.4;
-    color: #dcddde;
+    color: var(--ext-border);
     word-break: break-word;
     margin-top: 0.1rem;
   }
 
   .chan-msg-reply {
     font-size: 0.7rem;
-    color: #72767d;
+    color: var(--ext-text-muted);
     font-style: italic;
   }
 
@@ -336,14 +336,14 @@
     font-size: 0.85rem;
     outline: none;
     background: transparent;
-    color: #dcddde;
+    color: var(--ext-border);
   }
-  .chan-input::placeholder { color: #72767d; }
+  .chan-input::placeholder { color: var(--ext-text-muted); }
 
   .send-btn {
     padding: 0.6rem 1rem;
     background: #7289da;
-    color: white;
+    color: var(--ext-accent-text);
     border: none;
     cursor: pointer;
     font-size: 1rem;

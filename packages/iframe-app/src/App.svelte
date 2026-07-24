@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createWidgetBridge, type WidgetBridge } from 'budabit-sdk';
+  import { watchHostTheme } from './lib/host-theme';
   import {
     createGTStores,
     type GTStoreManager,
@@ -116,6 +117,9 @@
 
     statusMessage = 'Waiting for host context...';
 
+    // Match the host application's theme (light/dark + background)
+    const offTheme = watchHostTheme(b);
+
     // Normalize both current widget:init payloads and repo-scoped updates.
     function handleContext(ctx: any, includeInitPubkey = false) {
       const nestedRepo = ctx?.repoContext && typeof ctx.repoContext === 'object'
@@ -161,6 +165,7 @@
     b.signalReady();
 
     return () => {
+      offTheme();
       offInit();
       offRepoUpdate();
       offContext();
@@ -251,13 +256,85 @@
 </div>
 
 <style>
+  /* Theme tokens — lib/host-theme.ts sets `data-theme` on <html> from the
+     host's widget:init / widget:themeChanged events. */
+  :global(:root) {
+    color-scheme: light;
+    --ext-bg: #f5f5f5;
+    --ext-surface: #ffffff;
+    --ext-surface-2: #f8f9fa;
+    --ext-surface-3: #e9ecef;
+    --ext-border: #dee2e6;
+    --ext-border-subtle: #eeeeee;
+    --ext-text: #333333;
+    --ext-text-strong: #222222;
+    --ext-text-secondary: #555555;
+    --ext-text-muted: #666666;
+    --ext-text-faint: #999999;
+    --ext-accent: #007bff;
+    --ext-accent-hover: #0056b3;
+    --ext-accent-text: #ffffff;
+    --ext-success: #28a745;
+    --ext-success-bg: #d4edda;
+    --ext-success-text: #155724;
+    --ext-danger: #dc3545;
+    --ext-danger-bg: #f8d7da;
+    --ext-danger-border: #f5c6cb;
+    --ext-danger-text: #721c24;
+    --ext-warning: #ffc107;
+    --ext-warning-bg: #fff8e1;
+    --ext-warning-text: #e65100;
+    --ext-info-bg: #d1ecf1;
+    --ext-info-border: #bee5eb;
+    --ext-info-text: #0c5460;
+    --ext-neutral-bg: #e2e3e5;
+    --ext-neutral-text: #383d41;
+    --ext-disabled: #cccccc;
+    --ext-shadow: rgba(0, 0, 0, 0.08);
+  }
+
+  :global([data-theme='dark']) {
+    color-scheme: dark;
+    --ext-bg: #151c23;
+    --ext-surface: #1e2831;
+    --ext-surface-2: #232e39;
+    --ext-surface-3: #2a3541;
+    --ext-border: #33404c;
+    --ext-border-subtle: #2c3947;
+    --ext-text: #e6ebf0;
+    --ext-text-strong: #f2f6fa;
+    --ext-text-secondary: #c3ccd5;
+    --ext-text-muted: #98a6b3;
+    --ext-text-faint: #78889a;
+    --ext-accent: #3b96ff;
+    --ext-accent-hover: #63abff;
+    --ext-accent-text: #ffffff;
+    --ext-success: #34c759;
+    --ext-success-bg: #14321f;
+    --ext-success-text: #7fd6a0;
+    --ext-danger: #ef5b67;
+    --ext-danger-bg: #3b1d21;
+    --ext-danger-border: #7a3a42;
+    --ext-danger-text: #f1a7ad;
+    --ext-warning: #e2b93b;
+    --ext-warning-bg: #3f3520;
+    --ext-warning-text: #e8c869;
+    --ext-info-bg: #16323a;
+    --ext-info-border: #275764;
+    --ext-info-text: #8fd4e3;
+    --ext-neutral-bg: #2b333c;
+    --ext-neutral-text: #c3ccd5;
+    --ext-disabled: #46525d;
+    --ext-shadow: rgba(0, 0, 0, 0.45);
+  }
+
   :global(body) {
     margin: 0;
     padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
       sans-serif;
-    background: #f5f5f5;
-    color: #333;
+    background: var(--host-background, var(--ext-bg));
+    color: var(--ext-text);
   }
 
   .dashboard {
@@ -271,7 +348,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 0.75rem 0;
-    border-bottom: 1px solid #dee2e6;
+    border-bottom: 1px solid var(--ext-border);
     margin-bottom: 0;
     flex-wrap: wrap;
     gap: 0.5rem;
@@ -289,7 +366,7 @@
     margin: 0;
     font-size: 1.3rem;
     font-weight: 700;
-    color: #222;
+    color: var(--ext-text-strong);
   }
 
   .header-right {
@@ -303,22 +380,22 @@
     align-items: center;
     gap: 0.4rem;
     font-size: 0.8rem;
-    color: #888;
+    color: var(--ext-text-faint);
   }
 
   .status-indicator .dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #ffc107;
+    background: var(--ext-warning);
   }
 
   .status-indicator.connected .dot {
-    background: #28a745;
+    background: var(--ext-success);
   }
 
   .status-indicator.error .dot {
-    background: #dc3545;
+    background: var(--ext-danger);
   }
 
   .loading-state {
@@ -327,15 +404,15 @@
     align-items: center;
     justify-content: center;
     padding: 4rem 2rem;
-    color: #888;
+    color: var(--ext-text-faint);
     gap: 1rem;
   }
 
   .loading-spinner {
     width: 24px;
     height: 24px;
-    border: 3px solid #dee2e6;
-    border-top-color: #007bff;
+    border: 3px solid var(--ext-border);
+    border-top-color: var(--ext-accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -349,10 +426,10 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0.75rem;
-    background: #f8d7da;
-    border: 1px solid #f5c6cb;
+    background: var(--ext-danger-bg);
+    border: 1px solid var(--ext-danger-border);
     border-radius: 4px;
-    color: #721c24;
+    color: var(--ext-danger-text);
     font-size: 0.85rem;
     margin: 0.5rem 0;
   }
@@ -373,7 +450,7 @@
     margin-left: auto;
     background: none;
     border: none;
-    color: #721c24;
+    color: var(--ext-danger-text);
     cursor: pointer;
     font-size: 1rem;
     padding: 0;
@@ -382,7 +459,7 @@
   .tab-bar {
     display: flex;
     gap: 0;
-    border-bottom: 2px solid #dee2e6;
+    border-bottom: 2px solid var(--ext-border);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
@@ -398,23 +475,23 @@
     margin-bottom: -2px;
     cursor: pointer;
     font-size: 0.85rem;
-    color: #666;
+    color: var(--ext-text-muted);
     white-space: nowrap;
     transition: color 0.15s, border-color 0.15s;
   }
 
-  .tab:hover { color: #333; }
+  .tab:hover { color: var(--ext-text); }
 
   .tab.active {
-    color: #007bff;
-    border-bottom-color: #007bff;
+    color: var(--ext-accent);
+    border-bottom-color: var(--ext-accent);
     font-weight: 600;
   }
 
   .tab-icon { font-size: 1rem; }
 
   .tab-content {
-    background: white;
+    background: var(--ext-surface);
     border-radius: 0 0 8px 8px;
     padding: 1.25rem;
     min-height: 400px;
