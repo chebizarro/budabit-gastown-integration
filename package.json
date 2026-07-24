@@ -57,10 +57,5 @@
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
   },
-  "packageManager": "pnpm@8.15.0",
-  "pnpm": {
-    "overrides": {
-      "budabit-sdk": "file:/Users/bizarro/Documents/Projects/budabit/flotilla-extensions/budabit-extension-template/packages/sdk"
-    }
-  }
+  "packageManager": "pnpm@8.15.0"
 }
