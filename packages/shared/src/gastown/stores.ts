@@ -2,12 +2,11 @@
  * Reactive GT event stores backed by real-time Nostr subscriptions.
  *
  * No polling. No timeouts. Events arrive via the host bridge's
- * `nostr:subscribe` action, which pushes `nostr:event` messages
- * as they arrive from relay subscriptions.
+ * `nostr:subscribe` action, which pushes `nostr:subscription:event`
+ * messages as they arrive from relay subscriptions.
  */
 
 import type { WidgetBridge } from '../bridge.js';
-import type { NostrEventPush, NostrEosePush } from '../types.js';
 import type { NostrFilter } from './filters.js';
 import type { GTNostrEvent, ParsedGTEvent } from './types.js';
 import type {
@@ -24,17 +23,11 @@ import type {
   ChannelMessage,
   ChannelMetadata,
 } from './types.js';
-import { parseGTEvent, deduplicateReplaceable, sortByTimestamp } from './parser.js';
+import { parseGTEvent, deduplicateReplaceable } from './parser.js';
 import {
   activityLogFilter,
-  lifecycleFilter,
-  convoyFilter,
-  issueFilter,
   protocolFilter,
   workItemFilter,
-  queueDefFilter,
-  groupDefFilter,
-  channelDefFilter,
   allStateFilter,
   dmGiftWrapFilter,
   channelMessageFilter,
@@ -174,6 +167,8 @@ function parseChannelMessage(raw: GTNostrEvent): ChannelMessage | null {
   // Root 'e' tag points to the channel creation event
   const rootTag = raw.tags.find(t => t[0] === 'e' && (t[3] === 'root' || !t[3]));
   if (!rootTag) return null;
+  const channelId = rootTag[1];
+  if (!channelId) return null;
   const replyTag = raw.tags.find(t => t[0] === 'e' && t[3] === 'reply');
 
   return {
@@ -181,7 +176,7 @@ function parseChannelMessage(raw: GTNostrEvent): ChannelMessage | null {
     pubkey: raw.pubkey,
     content: raw.content,
     created_at: raw.created_at,
-    channelId: rootTag[1],
+    channelId,
     replyToId: replyTag?.[1],
   };
 }
@@ -210,14 +205,15 @@ function parseChannelMeta(raw: GTNostrEvent): ChannelMetadata | null {
 
   // Kind 41 — metadata update; the 'e' tag references the creation event
   const eTag = raw.tags.find(t => t[0] === 'e');
-  if (!eTag) return null;
+  const creationEventId = eTag?.[1];
+  if (!creationEventId) return null;
 
   return {
-    id: eTag[1],
+    id: creationEventId,
     name: meta.name ?? 'Unnamed Channel',
     about: meta.about,
     picture: meta.picture,
-    creationEventId: eTag[1],
+    creationEventId,
     updatedAt: raw.created_at,
   };
 }
@@ -226,7 +222,7 @@ function parseChannelMeta(raw: GTNostrEvent): ChannelMetadata | null {
  * Create a subscription-based GT store manager.
  *
  * Instead of polling, this opens persistent relay subscriptions via the host
- * bridge. Events stream in real-time via `nostr:event` push messages.
+ * bridge. Events stream in real-time via `nostr:subscription:event` push messages.
  */
 export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreManager {
   const logs = new GTStore<ParsedGTEvent<LogStatusContent>[]>([]);
@@ -245,9 +241,9 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
   const ready = new GTStore<boolean>(false);
   const error = new GTStore<string | null>(null);
 
-  let activeSubIds: string[] = [];
+  const activeSubscriptions = new Map<string, () => Promise<unknown>>();
   const unsubHandlers: (() => void)[] = [];
-  let channelSubId: string | null = null;
+  let channelSubIds: string[] = [];
   let readyTimeout: ReturnType<typeof setTimeout> | null = null;
 
   function ingestEvent(raw: GTNostrEvent): void {
@@ -273,7 +269,7 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
           const existing = prev.findIndex(m => m.creationEventId === meta.creationEventId);
           if (existing >= 0) {
             // Keep newer metadata
-            if ((meta.updatedAt ?? 0) > (prev[existing].updatedAt ?? 0)) {
+            if ((meta.updatedAt ?? 0) > (prev[existing]?.updatedAt ?? 0)) {
               const next = [...prev];
               next[existing] = meta;
               return next;
@@ -370,52 +366,50 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
   async function openSubscription(
     subLabel: string,
     filters: NostrFilter[],
-  ): Promise<string | null> {
-    try {
-      const result = await bridge.request('nostr:subscribe', {
-        id: subLabel,
-        relays,
-        filters: filters as Record<string, unknown>[],
-      });
+  ): Promise<string[]> {
+    const openedIds: string[] = [];
 
-      if (result && typeof result === 'object' && 'error' in result) {
-        throw new Error((result as { error: string }).error);
+    for (const [index, filter] of filters.entries()) {
+      const clientId = filters.length === 1 ? subLabel : `${subLabel}-${index + 1}`;
+
+      try {
+        const handle = await bridge.subscribe({
+          subscriptionId: clientId,
+          relays,
+          filter: filter as Record<string, unknown>,
+        });
+
+        // Always track the host-assigned ID returned by nostr:subscribe.
+        activeSubscriptions.set(handle.subscriptionId, handle.unsubscribe);
+        openedIds.push(handle.subscriptionId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        error.set(`Subscription ${clientId} failed: ${message}`);
       }
-
-      // Validate subscription response structure
-      if (!result || typeof result !== 'object' || !('subId' in result)) {
-        throw new Error('Invalid subscription response: missing subId');
-      }
-
-      const subId = (result as { subId: string }).subId ?? subLabel;
-      // Use immutable pattern for array update
-      activeSubIds = [...activeSubIds, subId];
-      return subId;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      error.set(`Subscription ${subLabel} failed: ${msg}`);
-      return null;
     }
+
+    return openedIds;
   }
 
-  async function closeSubscription(subId: string): Promise<void> {
+  async function closeSubscription(subscriptionId: string): Promise<void> {
+    const unsubscribe = activeSubscriptions.get(subscriptionId);
+    if (!unsubscribe) return;
+
+    activeSubscriptions.delete(subscriptionId);
     try {
-      await bridge.request('nostr:unsubscribe', { subId });
+      await unsubscribe();
     } catch {
       // Best-effort cleanup
     }
-    // Use immutable pattern for array update
-    activeSubIds = activeSubIds.filter(id => id !== subId);
   }
 
   async function connect(opts?: { rig?: string; userPubkey?: string }) {
     error.set(null);
 
     // Listen for pushed events from the host
-    const offEvent = bridge.onEvent('nostr:event', (payload: unknown) => {
-      const push = payload as NostrEventPush;
-      if (push?.event) {
-        ingestEvent(push.event as unknown as GTNostrEvent);
+    const offEvent = bridge.onEvent('nostr:subscription:event', (push) => {
+      if (activeSubscriptions.has(push.subscriptionId)) {
+        ingestEvent(push.event as GTNostrEvent);
       }
     });
     unsubHandlers.push(offEvent);
@@ -425,7 +419,7 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
     let eoseCount = 0;
 
     // Listen for EOSE to know when initial state is loaded
-    const offEose = bridge.onEvent('nostr:eose', (_payload: unknown) => {
+    const offEose = bridge.onEvent('nostr:eose', () => {
       eoseCount++;
       if (eoseCount >= successfulSubs.length && successfulSubs.length > 0) {
         if (readyTimeout) clearTimeout(readyTimeout);
@@ -442,32 +436,32 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
     }, 10000); // 10 second timeout
 
     // 1. All replaceable GT state (lifecycle, convoys, issues, defs)
-    const stateSub = await openSubscription('gt-state', [
+    const stateSubs = await openSubscription('gt-state', [
       allStateFilter({ rig: opts?.rig }),
     ]);
-    if (stateSub) successfulSubs.push(stateSub);
+    successfulSubs.push(...stateSubs);
 
     // 2. Append-only GT events (logs, protocol, work items) — limit initial backfill
     const since = Math.floor(Date.now() / 1000) - 86400; // last 24h
-    const streamSub = await openSubscription('gt-stream', [
+    const streamSubs = await openSubscription('gt-stream', [
       activityLogFilter({ rig: opts?.rig, visibility: ['feed', 'both'], since }),
       protocolFilter({ since }),
       workItemFilter({}),
     ]);
-    if (streamSub) successfulSubs.push(streamSub);
+    successfulSubs.push(...streamSubs);
 
     // 3. NIP-28 channel metadata (kind 40 + 41)
-    const channelsSub = await openSubscription('gt-channels', [
+    const channelsSubs = await openSubscription('gt-channels', [
       allChannelMetaFilter(),
     ]);
-    if (channelsSub) successfulSubs.push(channelsSub);
+    successfulSubs.push(...channelsSubs);
 
     // 4. NIP-17 DMs (gift-wrapped, addressed to our pubkey)
     if (opts?.userPubkey) {
-      const dmsSub = await openSubscription('gt-dms', [
+      const dmSubs = await openSubscription('gt-dms', [
         dmGiftWrapFilter({ recipientPubkey: opts.userPubkey, since }),
       ]);
-      if (dmsSub) successfulSubs.push(dmsSub);
+      successfulSubs.push(...dmSubs);
     }
 
     // If no subscriptions succeeded, set error and mark ready anyway
@@ -485,19 +479,16 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
     activeChannelId.set(channelId);
 
     const since = Math.floor(Date.now() / 1000) - 86400 * 7; // last 7 days
-    const subId = await openSubscription(`gt-chan-${channelId.slice(0, 8)}`, [
+    channelSubIds = await openSubscription(`gt-chan-${channelId.slice(0, 8)}`, [
       channelMessageFilter({ channelId, since, limit: MAX_CHANNEL_MESSAGES }),
     ]);
-    if (subId) {
-      channelSubId = subId;
-    }
   }
 
   function closeChannel() {
-    if (channelSubId) {
-      void closeSubscription(channelSubId);
-      channelSubId = null;
+    for (const subscriptionId of channelSubIds) {
+      void closeSubscription(subscriptionId);
     }
+    channelSubIds = [];
     activeChannelId.set(null);
   }
 
@@ -545,13 +536,11 @@ export function createGTStores(bridge: WidgetBridge, relays: string[]): GTStoreM
     }
     unsubHandlers.length = 0;
 
-    // Close relay subscriptions
-    for (const subId of activeSubIds) {
-      void bridge.request('nostr:unsubscribe', { subId }).catch(() => {
-        // Best-effort cleanup; ignore errors on teardown
-      });
+    // Close relay subscriptions through their bridge handles so the bridge's
+    // own subscription registry stays in sync.
+    for (const subscriptionId of [...activeSubscriptions.keys()]) {
+      void closeSubscription(subscriptionId);
     }
-    activeSubIds = [];
   }
 
   return {

@@ -11,28 +11,45 @@ interface PendingRequest {
 }
 
 /**
- * Worker bridge for headless Gas Town background tasks.
+ * Worker bridge for headless Smart Widget logic.
  *
- * Uses the same wire protocol as the iframe bridge:
+ * This is intentionally a stub, but it is consistent with Budabit's wire protocol:
  *   { type: 'request' | 'response' | 'event', action: string, payload?: unknown, id?: string }
  *
  * Use cases:
- *   - Background event aggregation (pre-processing relay events before forwarding to UI)
- *   - Offline spool management (queue events when relays are unreachable)
- *   - Headless agent coordination in service-worker contexts
+ * - background processing without DOM
+ * - future service-worker integration
+ * - headless coordination/testing
  */
 export interface WorkerBridge {
-  /** Handle a message received FROM the host. */
+  /**
+   * Handle a message received FROM the host (parent runtime).
+   */
   handleMessage(message: WidgetWireMessage): Promise<void>;
-  /** Send a request TO the host and await a correlated response. */
+
+  /**
+   * Send a request TO the host and await a correlated response.
+   */
   request(action: string, payload?: unknown): Promise<unknown>;
-  /** Register a handler for host→worker one-way event messages. */
+
+  /**
+   * Register a handler for host->worker one-way event messages.
+   */
   onEvent(action: string, handler: EventHandler): () => void;
-  /** Register a handler for host→worker requests. */
+
+  /**
+   * Register a handler for host->worker requests (bidirectional tool pattern).
+   */
   onRequest(action: string, handler: RequestHandler): () => void;
-  /** Send a raw wire message TO the host. */
+
+  /**
+   * Send a raw wire message TO the host.
+   */
   send(message: WidgetWireMessage): void;
-  /** Clean up internal state and reject pending requests. */
+
+  /**
+   * Clean up internal state and reject pending requests.
+   */
   destroy(): void;
 }
 
@@ -44,6 +61,7 @@ function makeId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
+
   return `w-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
@@ -63,7 +81,13 @@ export function createWorkerBridge(
 
   const request = (action: string, payload?: unknown): Promise<unknown> => {
     const id = makeId();
-    const msg: WidgetWireMessage = { type: 'request', id, action, payload };
+
+    const msg: WidgetWireMessage = {
+      type: 'request',
+      id,
+      action,
+      payload,
+    };
 
     return new Promise((resolve, reject) => {
       const timeoutId =
@@ -90,8 +114,11 @@ export function createWorkerBridge(
     if (!eventHandlers.has(action)) {
       eventHandlers.set(action, new Set());
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const set = eventHandlers.get(action)!;
     set.add(handler);
+
     return () => {
       set.delete(handler);
       if (set.size === 0) eventHandlers.delete(action);
@@ -100,6 +127,7 @@ export function createWorkerBridge(
 
   const onRequest = (action: string, handler: RequestHandler): (() => void) => {
     requestHandlers.set(action, handler);
+
     return () => {
       const current = requestHandlers.get(action);
       if (current === handler) requestHandlers.delete(action);
@@ -107,13 +135,16 @@ export function createWorkerBridge(
   };
 
   const handleMessage = async (message: WidgetWireMessage): Promise<void> => {
+    // Stub-friendly logging; extension authors can customize.
+    console.log('Worker received message:', message);
+
     if (message.type === 'response') {
-      const msgId = message.id;
-      if (!msgId) return;
-      const p = pending.get(msgId);
+      if (!message.id) return;
+      const p = pending.get(message.id);
       if (!p) return;
+
       if (p.timeoutId) clearTimeout(p.timeoutId);
-      pending.delete(msgId);
+      pending.delete(message.id);
       p.resolve(message.payload);
       return;
     }
@@ -121,25 +152,36 @@ export function createWorkerBridge(
     if (message.type === 'event') {
       const handlers = eventHandlers.get(message.action);
       if (!handlers || handlers.size === 0) return;
+
       await Promise.all(Array.from(handlers).map((h) => Promise.resolve(h(message.payload))));
       return;
     }
 
     if (message.type === 'request') {
       const handler = requestHandlers.get(message.action);
+
       try {
         const result = handler
           ? await handler(message.payload)
           : { error: `No handler registered for action ${message.action}` };
 
-        send({ type: 'response', id: message.id, action: message.action, payload: result });
+        const response: WidgetWireMessage = {
+          type: 'response',
+          id: message.id,
+          action: message.action,
+          payload: result,
+        };
+
+        send(response);
       } catch (err) {
-        send({
+        const response: WidgetWireMessage = {
           type: 'response',
           id: message.id,
           action: message.action,
           payload: { error: err instanceof Error ? err.message : String(err) },
-        });
+        };
+
+        send(response);
       }
     }
   };
@@ -151,10 +193,35 @@ export function createWorkerBridge(
         new Error(`WorkerBridge: destroyed while awaiting response (${p.action}, id: ${id})`)
       );
     }
+
     pending.clear();
     eventHandlers.clear();
     requestHandlers.clear();
   };
 
-  return { handleMessage, request, onEvent, onRequest, send, destroy };
+  return {
+    handleMessage,
+    request,
+    onEvent,
+    onRequest,
+    send,
+    destroy,
+  };
 }
+
+// Example usage in a Web Worker context:
+// Uncomment to enable and adapt for your project.
+/*
+declare const self: DedicatedWorkerGlobalScope;
+
+const bridge = createWorkerBridge((message) => {
+  self.postMessage(message);
+});
+
+self.addEventListener('message', (event) => {
+  void bridge.handleMessage(event.data as WidgetWireMessage);
+});
+
+// Example: call a host action
+void bridge.request('ui:toast', { message: 'Worker online', type: 'info' });
+*/

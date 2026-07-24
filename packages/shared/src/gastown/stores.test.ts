@@ -82,17 +82,22 @@ function createMockBridge() {
   const bridge: WidgetBridge = {
     request: vi.fn(async (action: string, payload?: unknown) => {
       requests.push({ action, payload });
-      if (action === 'nostr:subscribe') {
-        const p = payload as { id: string };
-        return { status: 'ok', subId: p?.id ?? 'sub-1' };
-      }
-      if (action === 'nostr:unsubscribe') {
-        return { status: 'ok' };
-      }
-      if (action === 'nostr:publish') {
-        return { status: 'ok' };
-      }
       return { status: 'ok' };
+    }),
+    subscribe: vi.fn(async (payload: {
+      subscriptionId: string;
+      relays: string[];
+      filter: Record<string, unknown>;
+    }) => {
+      requests.push({ action: 'nostr:subscribe', payload });
+      const subscriptionId = `host-${payload.subscriptionId}`;
+      return {
+        subscriptionId,
+        unsubscribe: async () => {
+          requests.push({ action: 'nostr:unsubscribe', payload: { subscriptionId } });
+          return { status: 'ok' };
+        },
+      };
     }),
     onEvent: vi.fn((action: string, handler: (payload: unknown) => void) => {
       if (!eventHandlers.has(action)) {
@@ -162,20 +167,20 @@ describe('createGTStores', () => {
   it('connect() opens relay subscriptions', async () => {
     await stores.connect();
 
-    // Should register event handlers for nostr:event and nostr:eose
-    expect(mock.bridge.onEvent).toHaveBeenCalledWith('nostr:event', expect.any(Function));
+    // Should register handlers for the current subscription push event and EOSE.
+    expect(mock.bridge.onEvent).toHaveBeenCalledWith('nostr:subscription:event', expect.any(Function));
     expect(mock.bridge.onEvent).toHaveBeenCalledWith('nostr:eose', expect.any(Function));
 
-    // Should open subscriptions (at least gt-state, gt-stream, gt-channels)
+    // Multi-filter groups are opened as one host subscription per filter.
     const subRequests = mock.requests.filter(r => r.action === 'nostr:subscribe');
-    expect(subRequests.length).toBeGreaterThanOrEqual(3);
+    expect(subRequests).toHaveLength(5);
   });
 
   it('connect() with userPubkey opens DM subscription', async () => {
     await stores.connect({ userPubkey: 'abc123' });
 
     const subRequests = mock.requests.filter(r => r.action === 'nostr:subscribe');
-    expect(subRequests.length).toBe(4); // state + stream + channels + dms
+    expect(subRequests).toHaveLength(6); // state + 3 stream filters + channels + dms
   });
 
   it('ingests lifecycle events (kind 30316)', async () => {
@@ -189,7 +194,7 @@ describe('createGTStores', () => {
       instance: 'worker-1',
     }, [['d', 'main/crew/worker-1'], ['rig', 'main'], ['role', 'crew'], ['status', 'ready']]);
 
-    mock.pushEvent('nostr:event', { subId: 'gt-state', event });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-state', event });
 
     expect(stores.agents.get()).toHaveLength(1);
     expect(stores.agents.get()[0].data.status).toBe('ready');
@@ -205,7 +210,7 @@ describe('createGTStores', () => {
       payload: { agent: 'worker-1' },
     }, [['type', 'spawn'], ['visibility', 'feed']]);
 
-    mock.pushEvent('nostr:event', { subId: 'gt-stream', event });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-stream-1', event });
 
     expect(stores.logs.get()).toHaveLength(1);
     expect(stores.logs.get()[0].data.type).toBe('spawn');
@@ -230,8 +235,8 @@ describe('createGTStores', () => {
       instance: 'w1',
     }, [['d', 'main/crew/w1']], { created_at: 2000 });
 
-    mock.pushEvent('nostr:event', { subId: 'gt-state', event: event1 });
-    mock.pushEvent('nostr:event', { subId: 'gt-state', event: event2 });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-state', event: event1 });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-state', event: event2 });
 
     expect(stores.agents.get()).toHaveLength(1);
     expect(stores.agents.get()[0].data.status).toBe('busy');
@@ -242,14 +247,18 @@ describe('createGTStores', () => {
 
     expect(stores.ready.get()).toBe(false);
 
-    // 3 subscriptions expected (no userPubkey): state, stream, channels
-    mock.pushEvent('nostr:eose', { subId: 'gt-state' });
-    expect(stores.ready.get()).toBe(false);
+    // Five subscriptions are expected: state, three stream filters, and channels.
+    for (const subscriptionId of [
+      'host-gt-state',
+      'host-gt-stream-1',
+      'host-gt-stream-2',
+      'host-gt-stream-3',
+    ]) {
+      mock.pushEvent('nostr:eose', { subscriptionId });
+      expect(stores.ready.get()).toBe(false);
+    }
 
-    mock.pushEvent('nostr:eose', { subId: 'gt-stream' });
-    expect(stores.ready.get()).toBe(false);
-
-    mock.pushEvent('nostr:eose', { subId: 'gt-channels' });
+    mock.pushEvent('nostr:eose', { subscriptionId: 'host-gt-channels' });
     expect(stores.ready.get()).toBe(true);
   });
 
@@ -265,7 +274,7 @@ describe('createGTStores', () => {
       tags: [['p', 'myPubkey']],
     };
 
-    mock.pushEvent('nostr:event', { subId: 'gt-dms', event: dmEvent });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-dms', event: dmEvent });
 
     expect(stores.directMessages.get()).toHaveLength(1);
     expect(stores.directMessages.get()[0].content).toBe('Hello from agent!');
@@ -284,8 +293,8 @@ describe('createGTStores', () => {
       tags: [['p', 'myPubkey']],
     };
 
-    mock.pushEvent('nostr:event', { subId: 'gt-dms', event: dmEvent });
-    mock.pushEvent('nostr:event', { subId: 'gt-dms', event: dmEvent });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-dms', event: dmEvent });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-dms', event: dmEvent });
 
     expect(stores.directMessages.get()).toHaveLength(1);
   });
@@ -302,7 +311,7 @@ describe('createGTStores', () => {
       tags: [],
     };
 
-    mock.pushEvent('nostr:event', { subId: 'gt-channels', event: chanCreate });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-channels', event: chanCreate });
 
     expect(stores.channelMeta.get()).toHaveLength(1);
     expect(stores.channelMeta.get()[0].name).toBe('general');
@@ -321,7 +330,7 @@ describe('createGTStores', () => {
       tags: [['e', 'chan-1', '', 'root']],
     };
 
-    mock.pushEvent('nostr:event', { subId: 'gt-channels', event: chanMsg });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-channels', event: chanMsg });
 
     const msgs = stores.channelMessages.get().get('chan-1');
     expect(msgs).toHaveLength(1);
@@ -385,16 +394,17 @@ describe('createGTStores', () => {
 
     // Should have sent unsubscribe requests for all active subs
     const unsubReqs = mock.requests.filter(r => r.action === 'nostr:unsubscribe');
-    expect(unsubReqs.length).toBeGreaterThanOrEqual(3);
+    expect(unsubReqs).toHaveLength(5);
   });
 
   it('handles subscription errors gracefully', async () => {
-    // Override request to fail
-    (mock.bridge.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      status: 'ok', subId: 'gt-state'
-    }).mockResolvedValueOnce({
-      error: 'Relay unreachable'
-    });
+    // Let the first subscription succeed, then simulate a host subscription failure.
+    (mock.bridge.subscribe as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        subscriptionId: 'host-gt-state',
+        unsubscribe: vi.fn().mockResolvedValue({ status: 'ok' }),
+      })
+      .mockRejectedValueOnce(new Error('Relay unreachable'));
 
     await stores.connect();
 
@@ -414,7 +424,7 @@ describe('createGTStores', () => {
       tags: [['d', 'test']], // no ['gt', '1'] tag
     };
 
-    mock.pushEvent('nostr:event', { subId: 'gt-state', event });
+    mock.pushEvent('nostr:subscription:event', { subscriptionId: 'host-gt-state', event });
 
     expect(stores.agents.get()).toHaveLength(0);
   });

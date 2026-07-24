@@ -91,7 +91,7 @@ interface PendingRequest {
 /**
  * Mock Smart Widget bridge for testing action-based request/response/event protocol.
  *
- * Matches Flotilla's wire messages:
+ * Matches Budabit's wire messages:
  *   { type: 'request'|'response'|'event', action: string, payload?: any, id?: string }
  */
 export class MockWidgetBridge {
@@ -159,12 +159,11 @@ export class MockWidgetBridge {
    */
   emitFromHost(msg: WidgetWireMessage): void {
     if (msg.type === 'response') {
-      const msgId = msg.id;
-      if (!msgId) return;
-      const pending = this.pending.get(msgId);
+      if (!msg.id) return;
+      const pending = this.pending.get(msg.id);
       if (!pending) return;
 
-      this.pending.delete(msgId);
+      this.pending.delete(msg.id);
       pending.resolve(msg.payload);
       return;
     }

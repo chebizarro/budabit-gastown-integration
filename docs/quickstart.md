@@ -52,7 +52,8 @@ pnpm manifest:generate \
   --icon "https://cdn.example.com/my-widget/icon.png" \
   --image "https://cdn.example.com/my-widget/preview.png" \
   --button-title "Open" \
-  --permissions "nostr:publish,ui:toast" \
+  --permissions "nostr:publish,nostr:query,nostr:subscribe,ui:toast" \
+  --nostr-kinds "30315,30316,30318,30319,30320,30321,30322,30323,30325" \
   --output "dist/widget"
 ```
 
@@ -154,16 +155,40 @@ Create `host-test.html` next to the repo root and open it in your browser:
         }
       });
 
-      // Demo: push context into the widget after it loads
+      // Wait for widget:ready, then send lifecycle events
+      window.addEventListener("message", (ev) => {
+        if (ev.data?.type === "event" && ev.data?.action === "widget:ready") {
+          log("[host] widget:ready received");
+          iframe.contentWindow.postMessage(
+            { type: "event", action: "widget:mounted", payload: {} },
+            "*"
+          );
+        }
+      });
+
+      // Send widget:init after iframe loads (provides pubkey + relays)
       iframe.addEventListener("load", () => {
-        log("[host] iframe loaded; sending context:update");
+        log("[host] iframe loaded; sending widget:init");
         iframe.contentWindow.postMessage(
           {
             type: "event",
-            action: "context:update",
+            action: "widget:init",
+            payload: {
+              pubkey: "demo-pubkey-hex",
+              hostVersion: "1.0.0",
+              relays: ["wss://relay.damus.io", "wss://nos.lol"]
+            }
+          },
+          "*"
+        );
+        // Also send context:repoUpdate for repo-scoped context
+        iframe.contentWindow.postMessage(
+          {
+            type: "event",
+            action: "context:repoUpdate",
             payload: {
               contextId: "demo-context",
-              userPubkey: "npub1...demo",
+              userPubkey: "demo-pubkey-hex",
               relays: ["wss://relay.damus.io", "wss://nos.lol"]
             }
           },
@@ -189,6 +214,38 @@ find . -type f -name "package.json" -exec sed -i '' 's/@flotilla\/ext/@my-org\/m
 - UI lives in `packages/iframe-app/src/App.svelte`
 - Bridge + types live in `packages/shared/src/`
 - Nostr event helpers live in `packages/shared/src/signaling.ts`
+
+### Key patterns
+
+```typescript
+// Signal readiness to the host (speeds up widget:mounted)
+b.signalReady();
+
+// Listen for lifecycle init (new hosts)
+b.onEvent('widget:init', (payload) => {
+  console.log('Init:', payload.pubkey, payload.relays);
+});
+
+// Listen for repo context (primary event name)
+b.onEvent('context:repoUpdate', (ctx) => {
+  console.log('Repo context:', ctx.relays);
+});
+
+// Open a persistent subscription; the host returns the authoritative ID.
+const sub = await b.subscribe({
+  subscriptionId: 'my-events',
+  relays,
+  filter: { kinds: [30315] },
+});
+b.onEvent('nostr:subscription:event', (push) => {
+  if (push.subscriptionId === sub.subscriptionId) {
+    console.log('Event:', push.event);
+  }
+});
+
+// Resize the iframe
+await b.request('ui:resize', { height: 800 });
+```
 
 ## 7) Publish
 

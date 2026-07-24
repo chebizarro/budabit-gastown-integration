@@ -24,8 +24,8 @@ self.addEventListener('message', (event) => {
   void bridge.handleMessage(event.data);
 });
 
-// Subscribe to nostr:event pushes
-bridge.onEvent('nostr:event', (payload) => {
+// Subscribe to nostr:subscription:event pushes
+bridge.onEvent('nostr:subscription:event', (payload) => {
   // Process incoming relay events
 });
 

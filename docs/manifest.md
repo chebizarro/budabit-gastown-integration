@@ -42,11 +42,45 @@ Example:
     ["icon", "https://cdn.example.com/my-widget/icon.png"],
     ["image", "https://cdn.example.com/my-widget/preview.png"],
     ["button", "Open", "app", "https://cdn.example.com/my-widget/index.html"],
+    ["nostrKinds", "30315"],
+    ["nostrKinds", "30316"],
+    ["nostrKinds", "30318"],
     ["permission", "nostr:publish"],
+    ["permission", "nostr:subscribe"],
     ["permission", "ui:toast"]
   ],
   "created_at": 1700000000
 }
+```
+
+### `nostrKinds` (required for data access)
+
+Declare which Nostr event kinds the widget needs to query or subscribe to. The host only allows access to declared kinds (plus universal read kinds 0 and 10002).
+
+- **Format**: One tag per kind number
+- **Example**: `["nostrKinds", "30315"]`
+
+For Gas Town, the full set is:
+```json
+["nostrKinds", "30315"],
+["nostrKinds", "30316"],
+["nostrKinds", "30318"],
+["nostrKinds", "30319"],
+["nostrKinds", "30320"],
+["nostrKinds", "30321"],
+["nostrKinds", "30322"],
+["nostrKinds", "30323"],
+["nostrKinds", "30325"],
+["nostrKinds", "38383"],
+["nostrKinds", "38384"],
+["nostrKinds", "38385"],
+["nostrKinds", "38386"],
+["nostrKinds", "14"],
+["nostrKinds", "40"],
+["nostrKinds", "41"],
+["nostrKinds", "42"],
+["nostrKinds", "1059"]
+```
 ```
 
 ## Tag Reference
@@ -106,7 +140,8 @@ Declare a permission string (one tag per permission).
 
 Notes:
 - Flotilla may treat some actions as privileged (commonly `nostr:*`, `storage:*`) and enforce them based on declared permissions.
-- This template’s demo defaults to `nostr:publish` and `ui:toast`.
+- The host enforces `nostrKinds` — extensions can only query/subscribe to declared kinds.
+- Permissions should include `nostr:subscribe` if the extension uses persistent subscriptions.
 
 ## Generating Smart Widget files (CLI)
 
@@ -126,7 +161,8 @@ pnpm manifest:generate \
   --icon "https://cdn.example.com/my-widget/icon.png" \
   --image "https://cdn.example.com/my-widget/preview.png" \
   --button-title "Open" \
-  --permissions "nostr:publish,ui:toast" \
+  --permissions "nostr:publish,nostr:query,nostr:subscribe,ui:toast" \
+  --nostr-kinds "30315,30316,30318" \
   --output "dist/widget"
 ```
 

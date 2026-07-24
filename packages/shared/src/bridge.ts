@@ -31,7 +31,63 @@ function makeId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+/**
+ * Deep copy that unwraps Proxy values (e.g. Svelte 5 `$state`) while preserving
+ * structured-clone-friendly types: Date, ArrayBuffer, typed arrays, Map, Set.
+ * Used as a fallback when `postMessage` rejects the original value.
+ */
+function deepSnapshot(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return new Date(value);
+  if (value instanceof ArrayBuffer) return value.slice(0);
+  if (ArrayBuffer.isView(value)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const view = value as any;
+    return new view.constructor(view.buffer.slice(0), view.byteOffset, view.length);
+  }
+  if (Array.isArray(value)) return value.map(deepSnapshot);
+  if (value instanceof Map) {
+    const out = new Map();
+    for (const [k, v] of value) out.set(deepSnapshot(k), deepSnapshot(v));
+    return out;
+  }
+  if (value instanceof Set) {
+    const out = new Set();
+    for (const v of value) out.add(deepSnapshot(v));
+    return out;
+  }
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(value)) {
+    out[k] = deepSnapshot((value as Record<string, unknown>)[k]);
+  }
+  return out;
+}
+
+/**
+ * Wraps `postMessage` with a fallback for `DataCloneError` (commonly caused by
+ * Svelte 5 `$state` proxies). On failure, retries with a deep-snapshotted copy
+ * and warns so the offending call site can be tracked down.
+ */
+function safePostMessage(target: Window, message: unknown, origin: string): void {
+  try {
+    target.postMessage(message, origin);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'DataCloneError') {
+      console.warn(
+        '[WidgetBridge] postMessage payload not cloneable, retrying with snapshot:',
+        err.message,
+        message,
+      );
+      target.postMessage(deepSnapshot(message), origin);
+    } else {
+      throw err;
+    }
+  }
+}
+
 export class WidgetBridge {
+  /** Whether `signalReady()` has been called. */
+  private _readySent = false;
   private targetWindow: Window;
   private targetOrigin: string;
   private validateOrigin?: (origin: string) => boolean;
@@ -40,6 +96,7 @@ export class WidgetBridge {
   private eventHandlers = new Map<string, Set<EventHandler>>();
   private requestHandlers = new Map<string, RequestHandler>();
   private listener: ((event: MessageEvent) => void) | null = null;
+  private subscriptions = new Set<string>();
 
   constructor(options: WidgetBridgeOptions = {}) {
     const targetWindow = options.targetWindow ?? window.parent;
@@ -90,7 +147,7 @@ export class WidgetBridge {
       this.pending.set(id, { action, resolve, reject, timeoutId });
 
       try {
-        this.targetWindow.postMessage(msg, this.targetOrigin);
+        safePostMessage(this.targetWindow, msg, this.targetOrigin);
       } catch (err) {
         if (timeoutId) clearTimeout(timeoutId);
         this.pending.delete(id);
@@ -151,9 +208,92 @@ export class WidgetBridge {
   }
 
   /**
+   * Signal to the host that this extension has finished initializing.
+   * The host waits for this (with a 5s fallback) before sending `widget:mounted`.
+   * Call this ONCE after your initial setup is complete.
+   */
+  signalReady(): void {
+    if (this._readySent) return;
+    this._readySent = true;
+    const msg: WidgetWireMessage = {
+      type: 'event',
+      action: 'widget:ready',
+      payload: { timestamp: Date.now() },
+    };
+    try {
+      safePostMessage(this.targetWindow, msg, this.targetOrigin);
+    } catch {
+      // Ignore — host may not be listening yet
+    }
+  }
+
+  /**
+   * Open a persistent Nostr subscription through the host bridge.
+   * Returns a handle with an unsubscribe function and the subscription ID.
+   *
+   * @example
+   * ```ts
+   * const sub = await bridge.subscribe({
+   *   subscriptionId: 'my-feed',
+   *   relays: ['wss://relay.example.com'],
+   *   filter: { kinds: [1], limit: 50 },
+   * });
+   *
+   * bridge.onEvent('nostr:subscription:event', ({ subscriptionId, event }) => {
+   *   if (subscriptionId === 'my-feed') console.log('New event:', event);
+   * });
+   *
+   * // Later:
+   * await sub.unsubscribe();
+   * ```
+   */
+  async subscribe(payload: {
+    subscriptionId: string;
+    relays: string[];
+    filter: Record<string, unknown>;
+  }): Promise<{ subscriptionId: string; unsubscribe: () => Promise<unknown> }> {
+    const res = await this.request('nostr:subscribe', payload);
+
+    if (!res || typeof res !== 'object') {
+      throw new Error('Invalid response from nostr:subscribe');
+    }
+
+    if ('error' in res) {
+      throw new Error(res.error);
+    }
+
+    if (!('status' in res) || res.status !== 'ok') {
+      throw new Error('Subscription failed with unknown error');
+    }
+
+    const subscriptionId = (res as { subscriptionId?: unknown }).subscriptionId;
+    if (typeof subscriptionId !== 'string' || !subscriptionId) {
+      throw new Error('Invalid subscription ID from nostr:subscribe');
+    }
+
+    this.subscriptions.add(subscriptionId);
+
+    return {
+      subscriptionId,
+      unsubscribe: async () => {
+        this.subscriptions.delete(subscriptionId);
+        return this.request('nostr:unsubscribe', { subscriptionId });
+      },
+    };
+  }
+
+  /**
    * Clean up event listeners and reject all pending requests.
    */
   destroy(): void {
+    // Unsubscribe from all active subscriptions
+    for (const subId of this.subscriptions) {
+      this.request('nostr:unsubscribe', { subscriptionId: subId }).catch(() => {
+        // Ignore errors during cleanup
+      });
+    }
+    this.subscriptions.clear();
+
     if (this.listener) {
       window.removeEventListener('message', this.listener);
       this.listener = null;
@@ -173,7 +313,7 @@ export class WidgetBridge {
 
   private shouldAcceptMessage(event: MessageEvent): boolean {
     // When possible, require that the message source is our target window.
-    // (This aligns with Flotilla sending from iframe.contentWindow / parent window.)
+    // (This aligns with Budabit sending from iframe.contentWindow / parent window.)
     if (event.source && event.source !== this.targetWindow) {
       return false;
     }
@@ -197,16 +337,15 @@ export class WidgetBridge {
     const parsed = WidgetWireMessageSchema.safeParse(event.data);
     if (!parsed.success) return;
 
-    const msg = parsed.data as WidgetWireMessage;
+    const msg = parsed.data;
 
     if (msg.type === 'response') {
-      const msgId = msg.id;
-      if (!msgId) return;
-      const pending = this.pending.get(msgId);
+      if (!msg.id) return;
+      const pending = this.pending.get(msg.id);
       if (!pending) return;
 
       if (pending.timeoutId) clearTimeout(pending.timeoutId);
-      this.pending.delete(msgId);
+      this.pending.delete(msg.id);
       pending.resolve(msg.payload);
       return;
     }
@@ -241,7 +380,7 @@ export class WidgetBridge {
           payload: result,
         };
 
-        source.postMessage(response, event.origin);
+        safePostMessage(source, response, event.origin);
       } catch (err) {
         const response: WidgetWireMessage = {
           type: 'response',
@@ -250,7 +389,7 @@ export class WidgetBridge {
           payload: { error: err instanceof Error ? err.message : String(err) },
         };
 
-        source.postMessage(response, event.origin);
+        safePostMessage(source, response, event.origin);
       }
     }
   }

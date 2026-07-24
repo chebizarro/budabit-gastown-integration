@@ -26,7 +26,7 @@ Subscribes to Gas Town's Nostr event kinds and renders live dashboards inside Fl
 Flotilla Host
 ├── ExtensionBridge (postMessage)
 │   ├── nostr:subscribe → opens relay subscriptions
-│   ├── nostr:event ← pushes events as they arrive
+│   ├── nostr:subscription:event ← pushes events as they arrive
 │   ├── nostr:eose ← signals end-of-stored-events
 │   └── nostr:publish → signs + publishes (DMs, channel messages)
 │
@@ -84,7 +84,7 @@ pnpm manifest:generate \
 
 ## Relay Configuration
 
-The extension receives relay URLs from the Flotilla host via `context:update`. These must match the relays your Gas Town instance publishes to:
+The extension receives relay URLs from the host via `widget:init` or `context:repoUpdate` (with an explicitly deprecated `context:update` fallback for older hosts). These must match the relays your Gas Town instance publishes to:
 
 ```bash
 # In your Gas Town .env / Docker config:

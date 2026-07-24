@@ -109,7 +109,8 @@ Example tag set:
 ```
 
 Notes:
-- There is no required "ready" handshake in the canonical Smart Widget protocol.
+- Extensions should call `signalReady()` after initialization to speed up `widget:mounted`.
+- The host waits up to 5 seconds for `widget:ready` before falling back.
 - Widgets should be resilient: render UI and be usable even if host context is not provided.
 
 ## Communication Flow (Action-Based Protocol)
@@ -141,20 +142,50 @@ Widget iframe                         Host
     │<─────────────────────────────────┤
 ```
 
-### Example: Host Sends Context (Optional Demo)
+### Example: Host Sends Lifecycle + Context
 
-Hosts may send context information (optional):
-
-- Action: `context:update`
-- Payload: `WidgetContext` (contextId, userPubkey, relays, etc.)
+The host sends `widget:init` (lifecycle) and `context:repoUpdate` (repo context):
 
 ```
 Host                                Widget iframe
   │                                     │
-  │ event context:update                │
+  │ event widget:init                   │
+  │ {pubkey, hostVersion, relays}       │
+  ├────────────────────────────────────>│
+  │                                     │ calls signalReady()
+  │ event widget:ready                  │
+  │<────────────────────────────────────┤
+  │                                     │
+  │ event widget:mounted                │
   ├────────────────────────────────────>│
   │                                     │
-  │                          updates UI (optional)
+  │ event context:repoUpdate            │
+  │ {contextId, relays, repoId, ...}    │
+  ├────────────────────────────────────>│
+  │                                     │
+  │                          opens nostr:subscribe
+```
+
+### Example: Persistent Subscription
+
+```
+Widget iframe                         Host (welshman)
+    │                                  │
+    │ request nostr:subscribe           │
+    │ {subscriptionId, relays, filter}  │
+    ├─────────────────────────────────>│
+    │                                  │ opens welshman request()
+    │ response {status: ok,             │
+    │   subscriptionId}                 │
+    │<─────────────────────────────────┤
+    │                                  │
+    │ event nostr:subscription:event                 │ real-time events
+    │ {subscriptionId, event}           │
+    │<─────────────────────────────────┤
+    │                                  │
+    │ event nostr:eose                  │ end of stored events
+    │ {subscriptionId, relay}           │
+    │<─────────────────────────────────┤
 ```
 
 ## Package Architecture (Template)
@@ -163,25 +194,29 @@ Host                                Widget iframe
 
 Framework-agnostic, reusable building blocks:
 
-- `WidgetWireMessage`, `WidgetActionMap`, `WidgetContext`
-- `WidgetBridge`: action-based postMessage bridge for iframes
+- `WidgetWireMessage`, `WidgetActionMap`, `WidgetInitPayload`, `RepoContext`
+- `WidgetBridge`: action-based postMessage bridge with `signalReady()` and `subscribe()`
+- All bridge action types (`NostrSubscribeRequest`, `StorageGetRequest`, etc.)
 - Nostr helpers: `createEvent`, `validateEvent`, etc.
 
 ### Iframe App (`@flotilla/ext-iframe`)
 
 A Svelte 5 Smart Widget UI demonstrating a `tool` widget:
 
-- Calls host actions via `bridge.request(\"nostr:publish\", ...)`
-- Shows UI feedback via `bridge.request(\"ui:toast\", ...)`
-- Optionally displays host context received via `bridge.onEvent(\"context:update\", ...)`
+- Calls `signalReady()` on initialization
+- Listens for `widget:init` and `context:repoUpdate` (with `context:update` fallback)
+- Opens persistent `nostr:subscribe` subscriptions for GT event kinds
+- Uses `nostr:publish` for DMs, channel messages, work item claims
+- Shows UI feedback via `ui:toast`
 
 ### Manifest/Generator (`@flotilla/ext-manifest`)
 
 Smart Widget generator CLI:
 
-- Generates unsigned kind `30033` event JSON
+- Generates unsigned kind `30033` event JSON (with `nostrKinds` tags)
+- Supports `--nostr-kinds` CLI flag for declaring required event kinds
 - Generates `widget.json` for optional `/.well-known/widget.json` hosting
-- Generates `PUBLISHING.md` with signing + publishing steps (including naddr hint when possible)
+- Generates `PUBLISHING.md` with signing + publishing steps
 
 ### Test Utilities (`@flotilla/test-utils`)
 
@@ -233,7 +268,7 @@ Widgets should:
 
 Widgets typically manage:
 - local reactive state (Svelte)
-- optional host-provided context (`context:update`)
+- host-provided lifecycle/repo context (`widget:init`, `context:repoUpdate`)
 - async in-flight requests (publish results, error states)
 
 ### Nostr Publish Flow (Host Capability)

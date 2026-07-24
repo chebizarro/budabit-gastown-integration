@@ -10,6 +10,25 @@ Smart Widgets are represented on Nostr as **kind `30033` addressable events** an
 
 This document focuses on isolating untrusted widget code, validating messages, and enforcing permissions for privileged host capabilities.
 
+## nostrKinds Enforcement
+
+Extensions must declare which Nostr event kinds they need via `nostrKinds` tags in their kind 30033 manifest. The host only allows queries and subscriptions for declared kinds (plus universal read kinds 0 and 10002). This prevents extensions from accessing event kinds they shouldn't need.
+
+```json
+["nostrKinds", "30315"],
+["nostrKinds", "30316"]
+```
+
+Without `nostrKinds` declarations, an extension can only read profiles (kind 0) and relay lists (kind 10002).
+
+## Subscription Safety
+
+- Maximum 10 concurrent subscriptions per extension
+- All subscriptions tracked per-extension with `AbortController`
+- Subscriptions automatically cleaned up when an extension is unloaded
+- 30-second request timeout for all bridge requests (prevents hanging promises)
+- Pending promises rejected on bridge detach (prevents memory leaks)
+
 ## Sandboxing
 
 ### Iframe Sandbox Attributes
@@ -370,9 +389,12 @@ console.log("Widget payload:", sanitizeForLog(payload));
 
 For widget authors (before publishing):
 - [ ] All URLs in kind 30033 tags use HTTPS (`app`, `icon`, `image`)
+- [ ] `nostrKinds` declared for all event kinds the widget needs
 - [ ] Permissions are minimal (only what the widget actually needs)
+- [ ] `signalReady()` called after initialization
 - [ ] No private keys or secrets in widget code
 - [ ] Outgoing publish payloads are reasonable (size, tags, kinds)
+- [ ] Subscriptions cleaned up on unmount
 - [ ] CSP is configured (recommended)
 - [ ] Dependencies up to date (`pnpm audit`)
 - [ ] Tests passing
@@ -381,8 +403,11 @@ For host integrators:
 - [ ] Iframe uses sandbox baseline (`allow-scripts allow-same-origin`) and only adds capabilities intentionally
 - [ ] postMessage validates `origin` and `source`
 - [ ] Strict action allow-list + payload validation per action
+- [ ] `nostrKinds` enforcement in query/subscribe handlers
 - [ ] Privileged actions (`nostr:*`, `storage:*`) enforced via declared `permission` tags + user consent
-- [ ] Rate limiting for expensive actions
+- [ ] Per-extension subscription limit enforced
+- [ ] Rate limiting for expensive actions (ui:* rate limited)
+- [ ] Request timeout on all bridge requests
 - [ ] Errors returned to widgets are generic (no sensitive details)
 
 ## Reporting Vulnerabilities

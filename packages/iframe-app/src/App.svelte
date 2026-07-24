@@ -104,7 +104,7 @@
     }));
     storeUnsubscribers.push(s.error.subscribe(v => { storeError = v; }));
 
-    // Open relay subscriptions (events stream in via nostr:event push)
+    // Open relay subscriptions (events stream via nostr:subscription:event).
     void s.connect({ userPubkey: pubkey });
   }
 
@@ -117,9 +117,15 @@
 
     statusMessage = 'Waiting for host context...';
 
-    const offContext = b.onEvent('context:update', (ctx) => {
-      const relays = Array.isArray(ctx?.relays) && ctx.relays.length > 0
-        ? ctx.relays
+    // Normalize both current widget:init payloads and repo-scoped updates.
+    function handleContext(ctx: any, includeInitPubkey = false) {
+      const nestedRepo = ctx?.repoContext && typeof ctx.repoContext === 'object'
+        ? ctx.repoContext
+        : null;
+      const relayCandidate = ctx?.relays ?? ctx?.repoRelays
+        ?? nestedRepo?.relays ?? nestedRepo?.repoRelays;
+      const relays = Array.isArray(relayCandidate) && relayCandidate.length > 0
+        ? relayCandidate
         : null;
 
       if (!relays) {
@@ -128,19 +134,44 @@
         return;
       }
 
-      userPubkey = typeof ctx?.userPubkey === 'string' ? ctx.userPubkey : undefined;
+      userPubkey = typeof ctx?.userPubkey === 'string'
+        ? ctx.userPubkey
+        : includeInitPubkey && typeof ctx?.pubkey === 'string'
+          ? ctx.pubkey
+          : userPubkey;
       connectStores(b, relays, userPubkey);
+    }
+
+    // Listen for the initial lifecycle context from current hosts.
+    const offInit = b.onEvent('widget:init', (payload) => {
+      handleContext(payload, true);
     });
 
+    // Listen for context:repoUpdate (primary repo-scoped context event).
+    const offRepoUpdate = b.onEvent('context:repoUpdate', (ctx) => {
+      handleContext(ctx);
+    });
+
+    // Deprecated legacy fallback for pre-v2 hosts; remove with bridge API v2.0.
+    const offContext = b.onEvent('context:update', (ctx) => {
+      handleContext(ctx);
+    });
+
+    // Signal to the host that we're ready for lifecycle events.
+    // This triggers faster widget:mounted delivery (host waits up to 5s otherwise).
+    b.signalReady();
+
     return () => {
+      offInit();
+      offRepoUpdate();
       offContext();
-      
+
       // Clean up store subscriptions
       for (const unsub of storeUnsubscribers) {
         unsub();
       }
       storeUnsubscribers = [];
-      
+
       stores?.disconnect();
       b.destroy();
     };
@@ -171,7 +202,7 @@
   {#if status === 'error'}
     <div class="error-banner">
       <strong>{statusMessage}</strong>
-      <p>Ensure the Flotilla host provides relay URLs via <code>context:update</code>.</p>
+      <p>Ensure the Flotilla host provides relay URLs via <code>widget:init</code> or <code>context:repoUpdate</code>.</p>
     </div>
   {:else}
     <nav class="tab-bar">

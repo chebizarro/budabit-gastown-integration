@@ -12,20 +12,34 @@ This extension subscribes to Gas Town's custom Nostr event kinds and renders the
 |-----|-----------|-------------|
 | **Activity** | 30315 (`LOG_STATUS`) | Real-time activity feed replacing `.events.jsonl` |
 | **Agents** | 30316 (`LIFECYCLE`) | Agent presence cards with heartbeat/stale detection |
+| **Chat** | 14 (`DM`) / 1059 (`GIFT_WRAP`) | NIP-17 direct messages |
+| **Channels** | 40/41/42 (`CHANNEL_*`) | NIP-28 public channels |
 | **Convoys** | 30318 (`GT_CONVOY_STATE`) | Convoy progress with tracked issue breakdown |
 | **Issues** | 30319 (`GT_BEADS_ISSUE_STATE`) | Beads issue mirror with status/priority filters |
+| **Groups** | 30321 (`GT_GROUP_DEF`) | Group definitions |
 | **Work Queue** | 30325 (`GT_WORK_ITEM`) + 30322 (`GT_QUEUE_DEF`) | Claimable work items and queue definitions |
 | **Protocol** | 30320 (`GT_PROTOCOL_EVENT`) | Machine-to-machine protocol events (MERGE_READY, etc.) |
 
+### nostrKinds Declaration
+
+The extension declares all the Nostr event kinds it needs in its kind 30033 manifest via `nostrKinds` tags. The host uses these to gate which kinds the extension can query/subscribe to through the bridge:
+
+```
+GT protocol kinds:  30315, 30316, 30318, 30319, 30320, 30321, 30322, 30323, 30325
+AI-Hub reused:      38383, 38384, 38385, 38386
+NIP-17 DMs:         14, 1059
+NIP-28 Channels:    40, 41, 42
+```
+
 ### Event Filtering
 
-All queries include `#gt: ["1"]` to scope to Gas Town protocol events. Additional tag filters (`#rig`, `#status`, `#type`, `#visibility`, etc.) are applied per-view.
+All GT queries include `#gt: ["1"]` to scope to Gas Town protocol events. Additional tag filters (`#rig`, `#status`, `#type`, `#visibility`, etc.) are applied per-view.
 
 Replaceable events (kinds 30316, 30318, 30319, 30321-30323) are deduplicated by `d` tag, keeping the latest version.
 
-### Blossom References
+### Subscription-Based Data Flow
 
-Issue events (30319) may include `blobs[]` arrays referencing content-addressed artifacts on Blossom servers. The Issues view surfaces blob counts; consumers can fetch blobs on-demand from the URLs.
+The extension uses **persistent Nostr subscriptions** via the host bridge's `nostr:subscribe` action — no polling or timeouts. Events stream in real-time via `nostr:subscription:event` push messages from the host, and EOSE signals via `nostr:eose` indicate when historical data has been loaded.
 
 ## Architecture
 
@@ -34,10 +48,13 @@ Issue events (30319) may include `blobs[]` arrays referencing content-addressed 
 │              Flotilla Host                   │
 │  ┌────────────────────────────────────────┐  │
 │  │  ExtensionRegistry + ExtensionBridge   │  │
-│  │  - nostr:query (SimplePool)            │  │
+│  │  - nostr:subscribe (welshman relay     │  │
+│  │    pool, persistent subscriptions)     │  │
+│  │  - nostr:query (welshman load, EOSE)   │  │
 │  │  - nostr:publish (publishThunk)        │  │
 │  │  - storage:* (localStorage scoped)     │  │
-│  │  - ui:toast                            │  │
+│  │  - ui:toast, ui:resize                 │  │
+│  │  - nostrKinds enforcement              │  │
 │  └──────────┬─────────────────────────────┘  │
 │             │ postMessage                     │
 └─────────────┼────────────────────────────────┘
@@ -46,18 +63,22 @@ Issue events (30319) may include `blobs[]` arrays referencing content-addressed 
 │  Sandboxed iframe (Gas Town Dashboard)       │
 │  ┌──────────▼────────────────────────────┐   │
 │  │  WidgetBridge → GTStoreManager        │   │
-│  │  - createGTStores(bridge, relays)     │   │
-│  │  - Reactive stores per event kind     │   │
-│  │  - Auto-refresh every 30s            │   │
+│  │  - Persistent nostr:subscribe subs    │   │
+│  │  - Real-time nostr:subscription:event ingestion    │   │
+│  │  - EOSE-based readiness detection     │   │
+│  │  - signalReady() on init              │   │
 │  └──────────┬────────────────────────────┘   │
 │             │                                 │
 │  ┌──────────▼────────────────────────────┐   │
 │  │  Svelte 5 Dashboard Views             │   │
-│  │  Activity | Agents | Convoys |        │   │
-│  │  Issues | Work Queue | Protocol       │   │
+│  │  Activity | Agents | Chat | Channels  │   │
+│  │  Convoys | Issues | Groups |          │   │
+│  │  Work Queue | Protocol                │   │
 │  └───────────────────────────────────────┘   │
 └──────────────────────────────────────────────┘
 ```
+
+**Dependency boundary**: The extension depends only on `nostr-tools` — never on `welshman`. All relay communication goes through the `WidgetBridge` postMessage protocol. The host fulfills requests using welshman's relay infrastructure.
 
 ## Package Structure
 
@@ -69,10 +90,10 @@ packages/
 │   │   ├── types.ts      # Payload type definitions
 │   │   ├── filters.ts    # Nostr filter builders
 │   │   ├── parser.ts     # Event parsing + dedup
-│   │   ├── stores.ts     # Reactive GT stores
+│   │   ├── stores.ts     # Subscription-based reactive GT stores
 │   │   └── index.ts      # Re-exports
-│   ├── bridge.ts         # WidgetBridge
-│   ├── types.ts          # Wire protocol types + WidgetActionMap
+│   ├── bridge.ts         # WidgetBridge (signalReady, subscribe)
+│   ├── types.ts          # Wire protocol types + full WidgetActionMap
 │   ├── signaling.ts      # GT event creation helpers
 │   └── index.ts          # Package exports
 ├── iframe-app/src/
@@ -82,37 +103,52 @@ packages/
 │   └── views/
 │       ├── ActivityView.svelte
 │       ├── AgentsView.svelte
+│       ├── ChatView.svelte
+│       ├── ChannelsView.svelte
 │       ├── ConvoysView.svelte
+│       ├── GroupsView.svelte
 │       ├── IssuesView.svelte
 │       ├── WorkQueueView.svelte
 │       └── ProtocolView.svelte
 ├── manifest/src/
-│   ├── generator.ts       # Smart Widget event generator
-│   ├── gastown-defaults.ts # GT-specific defaults
-│   └── cli.ts             # CLI tool
+│   ├── generator.ts       # Smart Widget event generator (with nostrKinds)
+│   ├── gastown-defaults.ts # GT-specific defaults (kinds, permissions)
+│   └── cli.ts             # CLI tool (--nostr-kinds flag)
 ├── worker/src/            # Headless bridge (future)
 └── test-utils/src/        # Test mocks
 ```
 
 ## Permissions
 
-The extension requests these permissions from the Flotilla host:
-
 | Permission | Purpose |
 |-----------|---------|
-| `nostr:query` | Fetch GT events from relays |
-| `nostr:publish` | Publish GT events (future: work item claims) |
+| `nostr:query` | One-shot fetch of GT events from relays |
+| `nostr:subscribe` | Persistent subscriptions for real-time event streaming |
+| `nostr:unsubscribe` | Close subscriptions |
+| `nostr:publish` | Publish GT events (work item claims, DMs, channel messages) |
 | `storage:get` | Read extension-scoped localStorage |
 | `storage:set` | Write extension-scoped localStorage |
 | `storage:remove` | Remove extension-scoped localStorage |
 | `storage:keys` | List extension-scoped localStorage keys |
 | `ui:toast` | Show toast notifications |
+| `ui:resize` | Request iframe height changes |
+
+## Lifecycle
+
+1. Host loads extension iframe in sandbox
+2. Extension creates `WidgetBridge` and calls `signalReady()`
+3. Host sends `widget:init` with pubkey, relays, hostVersion
+4. Extension also listens for `context:repoUpdate` (repo-scoped context)
+5. Extension opens persistent `nostr:subscribe` subscriptions for GT kinds
+6. Events stream in via `nostr:subscription:event` push messages
+7. EOSE signals per-relay trigger readiness state
+8. On unload: host cleans up all subscriptions automatically
 
 ## Environment & Relay Configuration
 
-The extension receives relay URLs from the host via `context:update`. If no context arrives within 3 seconds, it falls back to default relays.
+The extension receives relay URLs from the host via `widget:init` or `context:repoUpdate`. If no context arrives, a 10-second timeout marks the stores as ready with whatever data has arrived.
 
-Gas Town's Go-side Nostr publisher uses these env vars (documented in `gastown/docs/NOSTR.md`):
+Gas Town's Go-side Nostr publisher uses these env vars:
 
 | Env Var | Purpose |
 |---------|---------|
@@ -135,27 +171,16 @@ pnpm dev
 # Build all packages
 pnpm build
 
-# Generate Smart Widget manifest
+# Generate Smart Widget manifest (with nostrKinds for all GT kinds)
 pnpm manifest:generate \
   --title "Gas Town Dashboard" \
   --app-url "https://your-cdn.example.com/gastown/index.html" \
   --icon "https://your-cdn.example.com/gastown/icon.png" \
   --image "https://your-cdn.example.com/gastown/preview.png" \
   --identifier "gastown-dashboard" \
-  --permissions "nostr:publish,nostr:query,storage:get,storage:set,storage:remove,storage:keys,ui:toast"
+  --nostr-kinds "30315,30316,30318,30319,30320,30321,30322,30323,30325,38383,38384,38385,38386,14,40,41,42,1059" \
+  --permissions "nostr:publish,nostr:query,nostr:subscribe,nostr:unsubscribe,storage:get,storage:set,storage:remove,storage:keys,ui:toast,ui:resize"
 ```
-
-## Flotilla Slot Integration
-
-The extension can surface GT data in Flotilla's extension slots:
-
-| Slot ID | Use Case |
-|---------|----------|
-| `space:sidebar:widgets` | Agent status summary in sidebar |
-| `chat:message:actions` | Protocol event cards in channel messages |
-| `chat:composer:actions` | GT command shortcuts in chat composer |
-
-These are rendered by Flotilla's `SlotRenderer` component when the extension is loaded.
 
 ## Related Documentation
 
